@@ -112,13 +112,13 @@ def _dispatch(
         )
     if mode == "gang":
         try:
-            from sift_pdf.solve.t2_gang import solve_gang  # type: ignore[import-untyped]
+            from sift_pdf.solve.t2_gang import solve_gang
         except ImportError as exc:
             raise RuntimeError(
                 "T2 gang solver requires the [gang] extra (ortools). "
                 "Install with: pip install sift-pdf[gang]"
             ) from exc
-        return solve_gang(  # type: ignore[no-any-return]
+        return solve_gang(
             jobs,
             press,
             availability,
