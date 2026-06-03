@@ -69,9 +69,10 @@ def _form_dims(press: PressProfile, jobs: list[Job]) -> tuple[float, float, floa
     if uw is None or uw <= 0:
         raise ValueError("Cannot determine usable web width from press profile.")
 
-    max_h = max((j.die.height_pt + 2 * j.bleed_pt) for j in jobs if isinstance(j.die, RectDie))
-    if max_h <= 0:
+    rect_heights = [j.die.height_pt + 2 * j.bleed_pt for j in jobs if isinstance(j.die, RectDie)]
+    if not rect_heights:
         raise ValueError("No rect-die jobs to determine web repeat.")
+    max_h = max(rect_heights)
     repeat = snap_repeat(max_h, press)
     if repeat is None:
         raise ValueError("Press repeat model returned None for a web press.")
@@ -81,13 +82,16 @@ def _form_dims(press: PressProfile, jobs: list[Job]) -> tuple[float, float, floa
 def _allocate(
     cells: list[_Cell],
     form_area: float,
-    gap: float,
     must_not_gang: dict[int, list[int]],
     objective: ObjectiveWeights | None,
     seed: int,
     budget_ms: int,
 ) -> list[int]:
-    """CP-SAT quantity allocation. Returns n[i] for each cell index."""
+    """CP-SAT quantity allocation. Returns n[i] for each cell index.
+
+    Gap enforcement is handled downstream by the strip-packer; the area
+    constraint here is conservative (cell bounding-box areas only).
+    """
     obj = objective or ObjectiveWeights()
     model = cp_model.CpModel()
 
@@ -194,7 +198,11 @@ def solve_gang(
 
     Only rect-die jobs are supported; polygon/dieline-ref jobs are skipped.
     mustNotGangWith constraints are enforced as hard CP-SAT constraints.
+
+    availability is accepted for interface compatibility with T1/T3 but not yet
+    used — substrate/die/press-slot constraints are planned for a future wave.
     """
+    # TODO(wave3): enforce availability.substrates, .dies, .presses constraints
     if not jobs:
         raise ValueError("At least one job is required for a gang solve.")
 
@@ -227,7 +235,6 @@ def solve_gang(
     counts = _allocate(
         cells=cells,
         form_area=form_area,
-        gap=gap,
         must_not_gang=must_not_gang,
         objective=objective,
         seed=seed,
