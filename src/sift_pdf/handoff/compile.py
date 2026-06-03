@@ -97,7 +97,12 @@ def _explicit_plan(plan: SiftImposePlan) -> dict[str, Any]:
             "sheet": {"width_pt": plan.sheet.width_pt, "height_pt": plan.sheet.height_pt},
             "cell": {"width_pt": plan.cell.width_pt, "height_pt": plan.cell.height_pt},
             "gutter": {"x_pt": 0.0, "y_pt": 0.0},
-            "marks_zone": {"top_pt": 0.0, "right_pt": 0.0, "bottom_pt": 0.0, "left_pt": 0.0},
+            "marks_zone": {
+                "top_pt": plan.marks_zone.top_pt,
+                "right_pt": plan.marks_zone.right_pt,
+                "bottom_pt": plan.marks_zone.bottom_pt,
+                "left_pt": plan.marks_zone.left_pt,
+            },
             "cell_rotation": 0,
             "flip_per_row": False,
             "bleed_pt": plan.bleed_pt,

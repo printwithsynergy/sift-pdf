@@ -50,14 +50,15 @@ def test_geared_snaps_exact_match() -> None:
     assert snap_repeat(300.0, press) == 300.0
 
 
-def test_geared_returns_largest_when_oversized() -> None:
+def test_geared_raises_when_oversized() -> None:
     rm = GearedRepeatModel(
         type="geared",
         gear_set=[GearSpec(teeth=20, circular_pitch_pt=10.0)],
     )
     press = _press(rm)
-    # Target 250 > max gear 200 → return max
-    assert snap_repeat(250.0, press) == 200.0
+    # Target 250 > max gear 200 → die is oversized, must raise
+    with pytest.raises(ValueError, match="oversized"):
+        snap_repeat(250.0, press)
 
 
 # --- Servo snap -----------------------------------------------------------

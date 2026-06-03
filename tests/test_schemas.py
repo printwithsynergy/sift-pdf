@@ -115,3 +115,29 @@ def test_plan_with_explicit_placements() -> None:
     )
     assert plan.explicit_placements is not None
     assert len(plan.explicit_placements) == 1
+
+
+def test_plan_rejects_both_layouts_none() -> None:
+    with pytest.raises(ValidationError, match="Exactly one"):
+        _make_plan(grid_layout=None, explicit_placements=None)
+
+
+# --- ServoRepeatModel validation -------------------------------------------
+
+
+def test_servo_rejects_min_gt_max() -> None:
+    with pytest.raises(ValidationError, match="min_repeat_pt"):
+        ServoRepeatModel(type="servo", min_repeat_pt=500.0, max_repeat_pt=100.0)
+
+
+def test_servo_accepts_equal_min_max() -> None:
+    rm = ServoRepeatModel(type="servo", min_repeat_pt=300.0, max_repeat_pt=300.0)
+    assert rm.min_repeat_pt == rm.max_repeat_pt
+
+
+# --- GridLayout stagger_offset_pt validation --------------------------------
+
+
+def test_grid_layout_rejects_negative_stagger_offset() -> None:
+    with pytest.raises(ValidationError):
+        GridLayout(rows=2, cols=2, stagger_mode="custom", stagger_offset_pt=-1.0)

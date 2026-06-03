@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, NonNegativeFloat, PositiveFloat
+from pydantic import BaseModel, Field, NonNegativeFloat, PositiveFloat, model_validator
 
 
 class _Strict(BaseModel):
@@ -101,6 +101,7 @@ class GridLayout(_Strict):
     )
     stagger_offset_pt: float = Field(
         default=0.0,
+        ge=0.0,
         description="Custom stagger offset in points (used only when stagger_mode='custom').",
     )
 
@@ -196,6 +197,12 @@ class SiftImposePlan(BaseModel):
     )
 
     marks_intent: MarksIntent | None = None
+
+    @model_validator(mode="after")
+    def _check_layout(self) -> SiftImposePlan:
+        if self.grid_layout is None and self.explicit_placements is None:
+            raise ValueError("Exactly one of grid_layout or explicit_placements must be set.")
+        return self
 
 
 __all__ = [
