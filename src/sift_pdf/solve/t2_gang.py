@@ -69,9 +69,7 @@ def _form_dims(press: PressProfile, jobs: list[Job]) -> tuple[float, float, floa
     if uw is None or uw <= 0:
         raise ValueError("Cannot determine usable web width from press profile.")
 
-    max_h = max(
-        (j.die.height_pt + 2 * j.bleed_pt) for j in jobs if isinstance(j.die, RectDie)
-    )
+    max_h = max((j.die.height_pt + 2 * j.bleed_pt) for j in jobs if isinstance(j.die, RectDie))
     if max_h <= 0:
         raise ValueError("No rect-die jobs to determine web repeat.")
     repeat = snap_repeat(max_h, press)
