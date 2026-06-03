@@ -86,27 +86,29 @@ def compute_cache_key(
     sift_version: str = SIFT_VERSION,
     codex_pdf_version: str,
     geom_schema_version: str,
+    nest_engine_fingerprint: str = "",
 ) -> str:
     """Compose the content-addressed cache key for a solve request.
 
     Returns hex-encoded SHA-256. Components joined with '|' alphabetically
     so the digest is reproducible across language implementations.
+    nest_engine_fingerprint is only non-empty for mode='nest'; omitting it
+    (empty string) leaves grid/gang cache keys unchanged.
     """
-    components = "|".join(
-        [
-            _sha256_canonical(availability) if availability is not None else "none",
-            str(budget_ms),
-            codex_pdf_version,
-            geom_schema_version,
-            _sha256_canonical(jobs),
-            mode,
-            _sha256_canonical(objective) if objective is not None else "none",
-            _sha256_canonical(press),
-            str(seed),
-            sift_version,
-        ]
-    )
-    return hashlib.sha256(components.encode()).hexdigest()
+    parts = [
+        _sha256_canonical(availability) if availability is not None else "none",
+        str(budget_ms),
+        codex_pdf_version,
+        geom_schema_version,
+        _sha256_canonical(jobs),
+        mode,
+        nest_engine_fingerprint,
+        _sha256_canonical(objective) if objective is not None else "none",
+        _sha256_canonical(press),
+        str(seed),
+        sift_version,
+    ]
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
