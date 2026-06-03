@@ -114,3 +114,17 @@ def test_solve_rfc7807_error_shape_on_bad_request() -> None:
     assert "title" in body
     assert "status" in body
     assert "detail" in body
+
+
+def test_solve_budget_header_below_100_rejected() -> None:
+    r = client.post(
+        "/v1/sift/solve",
+        json=_payload(),
+        headers={"X-Sift-Budget-Ms": "50"},
+    )
+    assert r.status_code == 422
+
+
+def test_solve_negative_stagger_offset_rejected() -> None:
+    r = client.post("/v1/sift/solve", json=_payload(stagger_offset_pt=-1.0))
+    assert r.status_code == 422

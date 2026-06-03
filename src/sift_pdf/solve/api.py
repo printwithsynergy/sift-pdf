@@ -44,6 +44,7 @@ class SolveRequest(BaseModel):
     )
     stagger_offset_pt: float = Field(
         default=0.0,
+        ge=0.0,
         description="Custom stagger offset in points (used only when stagger_mode='custom').",
     )
     bleed_handling: BleedHandling = Field(
@@ -97,6 +98,12 @@ async def solve_endpoint(
     # Header values override body values (deterministic pinning channel)
     seed = x_sift_seed if x_sift_seed is not None else payload.seed
     budget_ms = x_sift_budget_ms if x_sift_budget_ms is not None else payload.budget_ms
+
+    if budget_ms < 100:
+        raise HTTPException(
+            status_code=422,
+            detail=f"X-Sift-Budget-Ms must be >= 100; got {budget_ms}.",
+        )
 
     if payload.mode == "suggest":
         raise HTTPException(

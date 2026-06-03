@@ -7,6 +7,7 @@ from sift_pdf.schemas.impose_plan import (
     CellSpec,
     ExplicitPlacement,
     GridLayout,
+    MarksZoneSpec,
     SheetSpec,
     SiftImposePlan,
     SubstrateChoice,
@@ -86,3 +87,32 @@ def test_stagger_placement_fields() -> None:
     assert ep["y1_pt"] == 216.0
     assert "rotation" in ep
     assert "flip_h" in ep
+
+
+def test_explicit_plan_propagates_marks_zone() -> None:
+    """_explicit_plan must use plan.marks_zone, not hardcoded zeros."""
+    plan = SiftImposePlan(
+        mode="gang",
+        tier="T2",
+        seed=0,
+        budget_ms=5000,
+        cache_key="c" * 64,
+        sift_version="0.1.0",
+        codex_geom_schema_version="1.1.0",
+        substrate=SubstrateChoice(web_width_pt=864.0, repeat_pt=432.0),
+        sheet=SheetSpec(width_pt=864.0, height_pt=432.0),
+        cell=CellSpec(width_pt=288.0, height_pt=216.0),
+        marks_zone=MarksZoneSpec(top_pt=18.0, right_pt=9.0, bottom_pt=12.0, left_pt=6.0),
+        explicit_placements=[
+            ExplicitPlacement(source_ref="sku-1:0", x0_pt=0.0, y0_pt=0.0, x1_pt=288.0, y1_pt=216.0),
+        ],
+        waste_pct=5.0,
+        material_area_pt2=864.0 * 432.0,
+        plate_count=4,
+    )
+    d = to_compile_impose_plan(plan)
+    mz = d["marks_zone"]
+    assert mz["top_pt"] == 18.0
+    assert mz["right_pt"] == 9.0
+    assert mz["bottom_pt"] == 12.0
+    assert mz["left_pt"] == 6.0

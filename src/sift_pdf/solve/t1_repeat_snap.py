@@ -58,7 +58,10 @@ def _snap_geared(target_pt: float, rm: GearedRepeatModel) -> float:
     for c in candidates:
         if c >= target_pt - 1e-6:
             return c
-    return candidates[-1]  # largest available (die oversized for press)
+    raise ValueError(
+        f"Target repeat {target_pt:.1f}pt exceeds largest available gear repeat "
+        f"{candidates[-1]:.1f}pt — die is oversized for this press."
+    )
 
 
 def _snap_servo(target_pt: float, rm: ServoRepeatModel) -> float:

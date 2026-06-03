@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, NonNegativeFloat, PositiveFloat
+from pydantic import BaseModel, Field, NonNegativeFloat, PositiveFloat, model_validator
 
 
 class _Strict(BaseModel):
@@ -101,6 +101,7 @@ class GridLayout(_Strict):
     )
     stagger_offset_pt: float = Field(
         default=0.0,
+        ge=0.0,
         description="Custom stagger offset in points (used only when stagger_mode='custom').",
     )
 
@@ -168,9 +169,8 @@ class SiftImposePlan(BaseModel):
     cell: CellSpec
     marks_zone: MarksZoneSpec = Field(default_factory=MarksZoneSpec)
 
-    # Layout — exactly one of grid_layout or explicit_placements is set.
-    # grid_layout: T1 uniform grid (stagger_mode="none").
-    # explicit_placements: T1-stagger, T2-gang, T3-nest, or T1-stagger fallback.
+    # Layout: at least one must be set. Both may coexist for stagger plans where
+    # grid_layout carries row/col metadata and explicit_placements carries positions.
     grid_layout: GridLayout | None = None
     explicit_placements: list[ExplicitPlacement] | None = None
 
@@ -196,6 +196,12 @@ class SiftImposePlan(BaseModel):
     )
 
     marks_intent: MarksIntent | None = None
+
+    @model_validator(mode="after")
+    def _check_layout(self) -> SiftImposePlan:
+        if self.grid_layout is None and self.explicit_placements is None:
+            raise ValueError("At least one of grid_layout or explicit_placements must be set.")
+        return self
 
 
 __all__ = [

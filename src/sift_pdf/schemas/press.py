@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, NonNegativeFloat, PositiveFloat
+from pydantic import BaseModel, Field, NonNegativeFloat, PositiveFloat, model_validator
 
 
 class _Strict(BaseModel):
@@ -40,6 +40,14 @@ class ServoRepeatModel(_Strict):
     type: Literal["servo"]
     min_repeat_pt: PositiveFloat
     max_repeat_pt: PositiveFloat
+
+    @model_validator(mode="after")
+    def _check_range(self) -> ServoRepeatModel:
+        if self.min_repeat_pt > self.max_repeat_pt:
+            raise ValueError(
+                f"min_repeat_pt ({self.min_repeat_pt}) must be <= max_repeat_pt ({self.max_repeat_pt})"
+            )
+        return self
 
 
 class DigitalWebRepeatModel(_Strict):
