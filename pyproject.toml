@@ -27,7 +27,7 @@ dependencies = [
   "httpx>=0.27",
   "structlog>=24.1",
   "prometheus-client>=0.20",
-  "ulid-py>=1.1",
+  "python-ulid>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -97,6 +97,11 @@ disallow_untyped_defs = false
 # codex-pdf doesn't ship a py.typed marker yet.
 [[tool.mypy.overrides]]
 module = ["codex_pdf", "codex_pdf.*"]
+ignore_missing_imports = true
+
+# python-ulid doesn't ship py.typed.
+[[tool.mypy.overrides]]
+module = ["ulid", "ulid.*"]
 ignore_missing_imports = true
 
 # ortools doesn't ship py.typed.
