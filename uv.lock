@@ -1420,6 +1420,7 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "spyrrow" },
 ]
 gang = [
     { name = "ortools" },
@@ -1460,6 +1461,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1" },
     { name = "python-ulid", specifier = ">=3.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
+    { name = "spyrrow", marker = "extra == 'dev'", specifier = ">=0.9.0" },
     { name = "spyrrow", marker = "extra == 'nest'", specifier = ">=0.9.0" },
     { name = "structlog", specifier = ">=24.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },

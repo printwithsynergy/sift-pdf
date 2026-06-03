@@ -18,7 +18,8 @@ OR-Tools (Apache License 2.0)
   Used by the T2 gang solver (optional [gang] extra).
   Apache-2.0 is compatible with AGPL-3.0-or-later.
 
-spyrrow (license — verify before production use: pip show spyrrow)
+spyrrow (MIT License)
+  Copyright 2025 Paul Durand-Lupinski
   Python wrapper for sparrow and jagua-rs.
   Used by the T3 nest solver (optional [nest] extra).
 
