@@ -105,6 +105,17 @@ def test_cjd_no_marks_step_when_marks_intent_none() -> None:
     assert "marks" not in types
 
 
+def test_cjd_no_marks_step_when_all_flags_false() -> None:
+    # marks_intent present but all flags False → no marks step (no-op emit suppressed)
+    intent = MarksIntent(
+        registration_marks=False, crop_marks=False, bearer_bars=False, eye_marks=False
+    )
+    env = to_cjd_envelope(_grid_plan(marks_intent=intent), {"sku-1": "s3://bucket/sku-1.pdf"})
+    types = [s["type"] for s in env["steps"]]
+    assert "marks" not in types
+    assert types == ["compose", "impose"]
+
+
 def test_cjd_compose_step_sources() -> None:
     env = to_cjd_envelope(_explicit_plan(), _REFS)
     compose = env["steps"][0]

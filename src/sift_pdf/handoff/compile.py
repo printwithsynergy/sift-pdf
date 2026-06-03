@@ -142,15 +142,16 @@ def to_cjd_envelope(
         }
     )
 
-    # 2. marks (optional)
-    if plan.marks_intent:
+    # 2. marks (optional) — only emit if at least one mark flag is True
+    mi = plan.marks_intent
+    if mi is not None and any([mi.registration_marks, mi.crop_marks, mi.bearer_bars, mi.eye_marks]):
         steps.append(
             {
                 "type": "marks",
-                "registration_marks": plan.marks_intent.registration_marks,
-                "crop_marks": plan.marks_intent.crop_marks,
-                "bearer_bars": plan.marks_intent.bearer_bars,
-                "eye_marks": plan.marks_intent.eye_marks,
+                "registration_marks": mi.registration_marks,
+                "crop_marks": mi.crop_marks,
+                "bearer_bars": mi.bearer_bars,
+                "eye_marks": mi.eye_marks,
             }
         )
 
