@@ -102,12 +102,18 @@ def compute_cache_key(
         geom_schema_version,
         _sha256_canonical(jobs),
         mode,
-        nest_engine_fingerprint,
-        _sha256_canonical(objective) if objective is not None else "none",
-        _sha256_canonical(press),
-        str(seed),
-        sift_version,
     ]
+    # Only include fingerprint when non-empty so grid/gang hashes are unchanged
+    if nest_engine_fingerprint:
+        parts.append(nest_engine_fingerprint)
+    parts.extend(
+        [
+            _sha256_canonical(objective) if objective is not None else "none",
+            _sha256_canonical(press),
+            str(seed),
+            sift_version,
+        ]
+    )
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 

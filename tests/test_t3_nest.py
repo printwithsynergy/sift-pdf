@@ -209,4 +209,27 @@ def test_same_seed_same_plan() -> None:
     p1 = solve_nest(jobs, press, None, None, seed=7, budget_ms=3000, cache_key=CACHE_KEY)
     p2 = solve_nest(jobs, press, None, None, seed=7, budget_ms=3000, cache_key=CACHE_KEY)
     assert p1.waste_pct == p2.waste_pct
-    assert len(p1.explicit_placements or []) == len(p2.explicit_placements or [])
+    assert p1.sku_placement_map == p2.sku_placement_map
+    p1_coords = [
+        (
+            ep.source_ref,
+            round(ep.x0_pt, 4),
+            round(ep.y0_pt, 4),
+            round(ep.x1_pt, 4),
+            round(ep.y1_pt, 4),
+            ep.rotation,
+        )
+        for ep in (p1.explicit_placements or [])
+    ]
+    p2_coords = [
+        (
+            ep.source_ref,
+            round(ep.x0_pt, 4),
+            round(ep.y0_pt, 4),
+            round(ep.x1_pt, 4),
+            round(ep.y1_pt, 4),
+            ep.rotation,
+        )
+        for ep in (p2.explicit_placements or [])
+    ]
+    assert p1_coords == p2_coords
