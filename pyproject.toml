@@ -1,0 +1,134 @@
+[project]
+name = "sift-pdf"
+version = "0.1.0"
+description = "SiftPDF — stateless imposition planning solver for the Print With Synergy stack. Produces ImposePlans (grid, stagger, gang, nest) for compile-pdf to execute."
+readme = "README.md"
+license = { text = "AGPL-3.0-or-later" }
+authors = [{ name = "Print With Synergy", email = "iam@quincy.codes" }]
+requires-python = ">=3.12"
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Multimedia :: Graphics",
+  "Topic :: Software Development :: Libraries",
+]
+
+dependencies = [
+  # In-process geometry primitives. The <2.0 cap is load-bearing:
+  # codex major bumps rotate /v1/contract + cache-key VERSION scheme.
+  "codex-pdf>=1.21.1,<2.0",
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.8",
+  "pydantic-settings>=2.2",
+  "httpx>=0.27",
+  "structlog>=24.1",
+  "prometheus-client>=0.20",
+  "ulid-py>=1.1",
+]
+
+[project.optional-dependencies]
+gang = [
+  # OR-Tools CP-SAT for T2 gang solver. Apache-2.0 — AGPL-compatible.
+  "ortools>=9.10",
+]
+nest = [
+  # spyrrow wraps sparrow (MIT) + jagua-rs (MPL-2.0).
+  # Verify spyrrow's own license (pip show spyrrow) before production use.
+  "spyrrow>=0.9.0",
+]
+geom = [
+  # pyclipr (Clipper2 binding) for polygon boolean ops forwarded from codex.
+  "pyclipr>=0.1.8",
+]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "pytest-cov>=4.1",
+  "ruff>=0.4",
+  "mypy>=1.9",
+  "pre-commit>=3.6",
+  "ortools>=9.10",
+]
+
+[project.scripts]
+sift-pdf = "sift_pdf.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/printwithsynergy/sift-pdf"
+Repository = "https://github.com/printwithsynergy/sift-pdf"
+Issues = "https://github.com/printwithsynergy/sift-pdf/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sift_pdf"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"schemas/v1" = "sift_pdf/schemas/v1"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "C4", "RET"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["N802"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+# codex-pdf doesn't ship a py.typed marker yet.
+[[tool.mypy.overrides]]
+module = ["codex_pdf", "codex_pdf.*"]
+ignore_missing_imports = true
+
+# ortools doesn't ship py.typed.
+[[tool.mypy.overrides]]
+module = ["ortools", "ortools.*"]
+ignore_missing_imports = true
+
+# spyrrow doesn't ship py.typed.
+[[tool.mypy.overrides]]
+module = ["spyrrow", "spyrrow.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["src/sift_pdf"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "raise NotImplementedError", "if TYPE_CHECKING:"]
+
+[tool.uv]
+dev-dependencies = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "pytest-cov>=4.1",
+  "ruff>=0.4",
+  "mypy>=1.9",
+  "pre-commit>=3.6",
+  "ortools>=9.10",
+]

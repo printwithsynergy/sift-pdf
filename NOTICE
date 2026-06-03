@@ -1,0 +1,49 @@
+sift-pdf
+Copyright 2026 Print With Synergy
+
+This product is licensed under the GNU Affero General Public License v3.0 or later
+(AGPL-3.0-or-later). See LICENSE for the full text.
+
+---
+
+This software depends on the following third-party components:
+
+codex-pdf (AGPL-3.0-or-later)
+  Copyright Think Neverland
+  https://github.com/printwithsynergy/codex-pdf
+
+OR-Tools (Apache License 2.0)
+  Copyright Google LLC
+  https://github.com/google/or-tools
+  Used by the T2 gang solver (optional [gang] extra).
+  Apache-2.0 is compatible with AGPL-3.0-or-later.
+
+spyrrow (license — verify before production use: pip show spyrrow)
+  Python wrapper for sparrow and jagua-rs.
+  Used by the T3 nest solver (optional [nest] extra).
+
+sparrow (MIT License)
+  A 2D irregular bin-packing / strip-packing engine.
+
+jagua-rs (Mozilla Public License 2.0)
+  Geometry and collision-detection library backing sparrow.
+  MPL-2.0 is a file-level copyleft license with no network/SaaS trigger,
+  compatible with AGPL-3.0-or-later. Modified jagua-rs files must be
+  published under MPL-2.0; unmodified use via an unmodified spyrrow wheel
+  satisfies this requirement automatically.
+
+pyclipr (MIT License)
+  Python bindings for Clipper2 polygon clipping.
+  Used via codex-pdf's polygon ops (optional [geom] extra).
+
+FastAPI (MIT License)
+  https://github.com/tiangolo/fastapi
+
+Pydantic (MIT License)
+  https://github.com/pydantic/pydantic
+
+structlog (MIT/Apache License)
+  https://github.com/hynek/structlog
+
+prometheus-client (Apache License 2.0)
+  https://github.com/prometheus/client_python
