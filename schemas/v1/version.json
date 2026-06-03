@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sift-pdf:schemas:v1:version",
+  "title": "SiftPDF v1 schema bundle version marker",
+  "description": "Consumed by /v1/contract to report the packaged schema version.",
+  "const": "0.1.0"
+}
