@@ -1,0 +1,1019 @@
+openapi: "3.1.0"
+info:
+  title: sift-pdf
+  version: "0.1.0"
+  description: |
+    Stateless, deterministic imposition planning solver for the Print With Synergy stack.
+    Produces ImposePlans (grid, stagger, gang, nest) for compile-pdf to execute.
+    Never writes PDF bytes.
+  license:
+    name: AGPL-3.0-or-later
+
+servers:
+  - url: http://localhost:8100
+    description: Local development
+
+security:
+  - apiKey: []
+
+x-phase: "1-wave0-wave1"
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      description: Returns 'ok' as long as the process is running. Also exposes version, enabled tiers, and codex section versions.
+      operationId: healthz
+      security: []
+      responses:
+        "200":
+          description: Service is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /readyz:
+    get:
+      summary: Readiness probe
+      description: Returns 'ready' when the service can accept requests.
+      operationId: readyz
+      security: []
+      responses:
+        "200":
+          description: Service is ready.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    description: Always 'ready'.
+
+  /v1/contract:
+    get:
+      summary: Contract surface
+      description: Published solver schema versions and codex section versions. Callers should pin against these versions.
+      operationId: contract
+      security: []
+      responses:
+        "200":
+          description: Contract surface.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContractResponse"
+
+  /v1/sift/solve:
+    post:
+      summary: Solve an imposition layout
+      description: |
+        Stateless, deterministic layout solve. Returns the most efficient ImposePlan
+        for the requested mode. Identical requests return the same plan (content-addressed cache).
+
+        **Stagger cuts** are supported in grid mode via `stagger_mode`:
+        - `half-drop-x`: odd rows shifted right by half the cell+gutter pitch
+        - `half-drop-y`: odd columns shifted up by half the cell+gutter pitch
+        - `custom`: specify exact `stagger_offset_pt`
+
+        Stagger layouts emit `explicit_placements` and require compile-pdf ≥1.1.0 for PDF generation.
+      operationId: solve
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SolveRequest"
+      parameters:
+        - name: X-Sift-Seed
+          in: header
+          description: Override the RNG seed for deterministic pinning.
+          schema:
+            type: integer
+        - name: X-Sift-Budget-Ms
+          in: header
+          description: Override the solver time budget in milliseconds.
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Plan solved (or served from cache).
+          headers:
+            X-Sift-Cache-Key:
+              description: Content-addressed cache key for this plan.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SolveResponse"
+        "400":
+          description: Invalid geometry or press constraints.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "422":
+          description: Request body failed schema validation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+        "501":
+          description: Requested solver tier not available (missing optional dep).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+
+  /v1/sift/suggest:
+    post:
+      summary: Suggest best substrate
+      description: Sweeps a substrate catalog and returns the layout with lowest waste %.
+      operationId: suggest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SuggestRequest"
+      responses:
+        "200":
+          description: Best layout found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuggestResponse"
+        "400":
+          description: No feasible layout found for any candidate.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+
+  /v1/sift/estimate:
+    post:
+      summary: Derive estimate manifest
+      description: Computes an EstimateManifest from an existing SiftImposePlan. Pure calculation — no new solve.
+      operationId: estimate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EstimateRequest"
+      responses:
+        "200":
+          description: Manifest computed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EstimateManifest"
+
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-Sift-Key
+      description: API key authentication (required when SIFT_AUTH_MODE=api-key).
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, version, instance_id, cache_backend]
+      properties:
+        status:
+          type: string
+          description: Always 'ok'.
+        version:
+          type: string
+          description: sift-pdf package version.
+        instance_id:
+          type: string
+          description: Unique ID for this process instance.
+        cache_backend:
+          type: string
+          description: Active cache backend (memory | redis).
+        enabled_tiers:
+          type: array
+          items:
+            type: string
+          description: Active solver tiers from SIFT_TIERS env var.
+        codex_pdf_version:
+          type: string
+          description: codex-pdf wheel version in use.
+        codex_section_versions:
+          type: object
+          additionalProperties:
+            type: string
+          description: codex section schema versions (geom, codex-document).
+
+    ContractResponse:
+      type: object
+      required: [contract_name, schema_version, package_version, endpoints]
+      properties:
+        contract_name:
+          type: string
+          description: Always 'sift-pdf'.
+        schema_version:
+          type: string
+          description: sift-pdf document schema version.
+        package_version:
+          type: string
+          description: sift-pdf package version.
+        endpoints:
+          type: array
+          items:
+            type: string
+          description: All mounted route paths.
+        solver_schema_versions:
+          type: object
+          additionalProperties:
+            type: string
+          description: Per-solver schema versions (solve, suggest, estimate).
+        codex_section_versions:
+          type: object
+          additionalProperties:
+            type: string
+          description: codex section schema versions consumed.
+
+    ProblemDetails:
+      type: object
+      required: [type, title, status, detail]
+      properties:
+        type:
+          type: string
+          description: URI identifying the problem type.
+        title:
+          type: string
+          description: Short, human-readable summary.
+        status:
+          type: integer
+          description: HTTP status code.
+        detail:
+          type: string
+          description: Specific explanation of this occurrence.
+        instance:
+          type: string
+          description: Request path or failure-occurrence identifier.
+
+    SolveRequest:
+      type: object
+      required: [jobs, press_profile]
+      properties:
+        jobs:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Job"
+          description: SKUs to lay out.
+        press_profile:
+          $ref: "#/components/schemas/PressProfile"
+        availability:
+          $ref: "#/components/schemas/Availability"
+          nullable: true
+        objective:
+          $ref: "#/components/schemas/ObjectiveWeights"
+          nullable: true
+        mode:
+          type: string
+          enum: [grid, gang, nest]
+          default: grid
+          description: Solver tier to use.
+        stagger_mode:
+          type: string
+          enum: [none, half-drop-x, half-drop-y, custom]
+          default: none
+          description: Stagger (half-drop / brick) pattern for grid mode.
+        stagger_offset_pt:
+          type: number
+          default: 0
+          description: Custom stagger offset in points (used only when stagger_mode=custom).
+        bleed_handling:
+          type: string
+          enum: [none, trim, extend]
+          default: none
+          description: How bleed extends beyond the cell trim box.
+        seed:
+          type: integer
+          default: 42
+          description: RNG seed for deterministic results (T3 nest).
+        budget_ms:
+          type: integer
+          default: 5000
+          minimum: 100
+          description: Solver time budget in milliseconds.
+
+    SolveResponse:
+      type: object
+      required: [plan, cache_hit]
+      properties:
+        plan:
+          $ref: "#/components/schemas/SiftImposePlan"
+        cache_hit:
+          type: boolean
+          description: True if this response was served from cache.
+
+    SuggestRequest:
+      type: object
+      required: [jobs, substrate_catalog, press_profile]
+      properties:
+        jobs:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Job"
+          description: SKUs to lay out.
+        substrate_catalog:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/SubstrateCatalogEntry"
+          description: Substrate candidates to sweep.
+        press_profile:
+          $ref: "#/components/schemas/PressProfile"
+        objective:
+          $ref: "#/components/schemas/ObjectiveWeights"
+          nullable: true
+        availability:
+          $ref: "#/components/schemas/Availability"
+          nullable: true
+        seed:
+          type: integer
+          default: 42
+        budget_ms:
+          type: integer
+          default: 5000
+          minimum: 100
+
+    SuggestResponse:
+      type: object
+      required: [plan, substrate_id, candidates_evaluated]
+      properties:
+        plan:
+          $ref: "#/components/schemas/SiftImposePlan"
+        substrate_id:
+          type: string
+          description: ID of the selected substrate from the catalog.
+        candidates_evaluated:
+          type: integer
+          description: Number of feasible candidates evaluated.
+
+    EstimateRequest:
+      type: object
+      required: [plan]
+      properties:
+        plan:
+          $ref: "#/components/schemas/SiftImposePlan"
+
+    EstimateManifest:
+      type: object
+      required: [plan_cache_key, plate_count, sheet_width_pt, sheet_height_pt, cell_width_pt, cell_height_pt, cells_total, waste_pct, est_material_area_m2]
+      properties:
+        plan_cache_key:
+          type: string
+          description: Cache key of the source SiftImposePlan.
+        plate_count:
+          type: integer
+          description: Plate/cylinder impressions required.
+        sheet_width_pt:
+          type: number
+          description: Sheet width in points.
+        sheet_height_pt:
+          type: number
+          description: Sheet height in points.
+        cell_width_pt:
+          type: number
+          description: Cell trim width in points.
+        cell_height_pt:
+          type: number
+          description: Cell trim height in points.
+        cells_total:
+          type: integer
+          description: Total cells on the sheet.
+        waste_pct:
+          type: number
+          description: Substrate waste as a percentage.
+        est_material_area_m2:
+          type: number
+          description: Estimated material area in m².
+        est_cost:
+          type: number
+          nullable: true
+          description: Estimated cost (currency-agnostic).
+        est_run_time_sec:
+          type: number
+          nullable: true
+          description: Estimated press time in seconds.
+        special_processes:
+          type: array
+          items:
+            type: string
+          description: Special finishing processes from job specs.
+
+    SiftImposePlan:
+      type: object
+      required: [schema_version, mode, tier, seed, budget_ms, cache_key, sift_version, codex_geom_schema_version, substrate, sheet, cell, waste_pct, material_area_pt2, plate_count]
+      properties:
+        schema_version:
+          type: string
+          description: Plan document schema version.
+        mode:
+          type: string
+          enum: [grid, gang, nest, suggest]
+          description: Solve mode used.
+        tier:
+          type: string
+          enum: [T1, T2, T3]
+          description: Solver tier used.
+        seed:
+          type: integer
+          description: RNG seed used (determinism pin).
+        budget_ms:
+          type: integer
+          description: Solver budget in milliseconds.
+        cache_key:
+          type: string
+          description: Content-addressed cache key for this plan.
+        sift_version:
+          type: string
+          description: sift-pdf version that produced this plan.
+        codex_geom_schema_version:
+          type: string
+          description: codex GEOM_SCHEMA_VERSION consumed.
+        substrate:
+          $ref: "#/components/schemas/SubstrateChoice"
+        sheet:
+          $ref: "#/components/schemas/SheetSpec"
+        cell:
+          $ref: "#/components/schemas/CellSpec"
+        marks_zone:
+          $ref: "#/components/schemas/MarksZoneSpec"
+        grid_layout:
+          $ref: "#/components/schemas/GridLayout"
+          nullable: true
+          description: Set for T1 uniform/stagger grid. Null for gang/nest.
+        explicit_placements:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExplicitPlacement"
+          nullable: true
+          description: Pre-computed cell positions for stagger/gang/nest. Requires compile-pdf ≥1.1.0.
+        bleed_pt:
+          type: number
+          description: Bleed extension in points.
+        bleed_handling:
+          type: string
+          enum: [none, trim, extend]
+        waste_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: Substrate waste as a percentage.
+        material_area_pt2:
+          type: number
+          description: Total sheet area in pt².
+        est_cost:
+          type: number
+          nullable: true
+        est_run_time_sec:
+          type: number
+          nullable: true
+        plate_count:
+          type: integer
+          minimum: 0
+        sku_placement_map:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: integer
+          nullable: true
+          description: Mapping from Job.id to explicit_placements indices (gang/nest).
+        lane_assignments:
+          type: array
+          items:
+            type: integer
+          nullable: true
+          description: Per-placement lane index (digital web).
+        marks_intent:
+          $ref: "#/components/schemas/MarksIntent"
+          nullable: true
+
+    GridLayout:
+      type: object
+      required: [rows, cols]
+      properties:
+        rows:
+          type: integer
+          minimum: 1
+          description: Number of rows.
+        cols:
+          type: integer
+          minimum: 1
+          description: Number of columns.
+        gutter_x_pt:
+          type: number
+          default: 0
+          description: Horizontal gutter between cells in points.
+        gutter_y_pt:
+          type: number
+          default: 0
+          description: Vertical gutter between cells in points.
+        cell_rotation:
+          type: integer
+          enum: [0, 90, 180, 270]
+          default: 0
+          description: Uniform cell rotation in degrees.
+        flip_per_row:
+          type: boolean
+          default: false
+          description: Alternate horizontal flip per row.
+        bleed_handling:
+          type: string
+          enum: [none, trim, extend]
+          default: none
+        stagger_mode:
+          type: string
+          enum: [none, half-drop-x, half-drop-y, custom]
+          default: none
+          description: |
+            Stagger pattern. When not 'none', explicit_placements are used
+            instead of tile_grid params.
+        stagger_offset_pt:
+          type: number
+          default: 0
+          description: Custom stagger offset (used only when stagger_mode=custom).
+
+    ExplicitPlacement:
+      type: object
+      required: [source_ref, x0_pt, y0_pt, x1_pt, y1_pt]
+      properties:
+        source_ref:
+          type: string
+          description: Job.id (+ optional ':pageIdx') for lineage tracking.
+        x0_pt:
+          type: number
+          description: Lower-left x in points.
+        y0_pt:
+          type: number
+          description: Lower-left y in points.
+        x1_pt:
+          type: number
+          description: Upper-right x in points.
+        y1_pt:
+          type: number
+          description: Upper-right y in points.
+        rotation:
+          type: number
+          default: 0
+          description: Rotation in degrees.
+        flip_h:
+          type: boolean
+          default: false
+        flip_v:
+          type: boolean
+          default: false
+        row:
+          type: integer
+          nullable: true
+          description: Grid row (informational).
+        col:
+          type: integer
+          nullable: true
+          description: Grid column (informational).
+
+    SubstrateChoice:
+      type: object
+      properties:
+        web_width_pt:
+          type: number
+          nullable: true
+          description: Web press usable width in points.
+        repeat_pt:
+          type: number
+          nullable: true
+          description: Snapped around-cylinder repeat in points.
+        sheet_width_pt:
+          type: number
+          nullable: true
+          description: Sheet press width in points.
+        sheet_height_pt:
+          type: number
+          nullable: true
+          description: Sheet press height in points.
+
+    SheetSpec:
+      type: object
+      required: [width_pt, height_pt]
+      properties:
+        width_pt:
+          type: number
+          description: Sheet width in points.
+        height_pt:
+          type: number
+          description: Sheet height in points.
+
+    CellSpec:
+      type: object
+      required: [width_pt, height_pt]
+      properties:
+        width_pt:
+          type: number
+          description: Cell trim width in points.
+        height_pt:
+          type: number
+          description: Cell trim height in points.
+
+    MarksZoneSpec:
+      type: object
+      properties:
+        top_pt:
+          type: number
+          default: 0
+          description: Top margin reserved for marks in points.
+        right_pt:
+          type: number
+          default: 0
+        bottom_pt:
+          type: number
+          default: 0
+        left_pt:
+          type: number
+          default: 0
+
+    MarksIntent:
+      type: object
+      properties:
+        registration_marks:
+          type: boolean
+          default: false
+          description: Include registration marks.
+        crop_marks:
+          type: boolean
+          default: false
+          description: Include crop marks at cell trim corners.
+        bearer_bars:
+          type: boolean
+          default: false
+          description: Include bearer bars.
+        eye_marks:
+          type: boolean
+          default: false
+          description: Include eye marks for finishing equipment.
+
+    SubstrateCatalogEntry:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          description: Substrate identifier.
+        web_width_pt:
+          type: number
+          nullable: true
+          description: Web width override in points.
+        sheet_width_pt:
+          type: number
+          nullable: true
+          description: Sheet width override in points.
+        sheet_height_pt:
+          type: number
+          nullable: true
+          description: Sheet height override in points.
+        description:
+          type: string
+          nullable: true
+          description: Human-readable substrate description.
+
+    Job:
+      type: object
+      required: [id, die, quantity]
+      properties:
+        id:
+          type: string
+          description: Unique SKU / job identifier.
+        die:
+          oneOf:
+            - $ref: "#/components/schemas/RectDie"
+            - $ref: "#/components/schemas/PolygonDie"
+            - $ref: "#/components/schemas/DielineRefDie"
+          discriminator:
+            propertyName: type
+          description: Die shape.
+        bleed_pt:
+          type: number
+          default: 0
+          description: Bleed extension in points.
+        allowed_rotations:
+          type: array
+          items:
+            type: integer
+            enum: [0, 90, 180, 270]
+          default: [0]
+          description: Allowed die rotations in degrees.
+        min_gap_pt:
+          type: number
+          default: 0
+          description: Minimum gap to neighbouring cells in points.
+        separations:
+          type: integer
+          default: 4
+          minimum: 1
+          description: Number of ink separations (for plate cost).
+        quantity:
+          type: integer
+          minimum: 1
+          description: Required quantity (units).
+        priority:
+          type: integer
+          default: 0
+          description: Higher = more important for scheduling.
+        due_date:
+          type: string
+          nullable: true
+          description: ISO 8601 due date (used by sift.pool, not by solve).
+        grain_lock:
+          type: string
+          enum: [with-web, cross-web]
+          nullable: true
+          description: Force grain / web-direction orientation.
+        must_not_gang_with:
+          type: array
+          items:
+            type: string
+          description: Job IDs that must not appear on the same form.
+        allowed_substrate_ids:
+          type: array
+          items:
+            type: string
+          description: Restrict to these substrate IDs. Empty = any.
+        required_die_id:
+          type: string
+          nullable: true
+          description: Must use this specific die ID from inventory.
+
+    RectDie:
+      type: object
+      required: [type, width_pt, height_pt]
+      properties:
+        type:
+          type: string
+          enum: [rect]
+        width_pt:
+          type: number
+          description: Trim width in points.
+        height_pt:
+          type: number
+          description: Trim height in points.
+
+    PolygonDie:
+      type: object
+      required: [type, points]
+      properties:
+        type:
+          type: string
+          enum: [polygon]
+        points:
+          type: array
+          minItems: 3
+          items:
+            type: array
+            items:
+              type: number
+            minItems: 2
+            maxItems: 2
+          description: Closed polygon ring [[x,y], ...] in PDF points.
+
+    DielineRefDie:
+      type: object
+      required: [type, die_id]
+      properties:
+        type:
+          type: string
+          enum: [dieline-ref]
+        die_id:
+          type: string
+          description: Die identifier in the inventory.
+
+    PressProfile:
+      type: object
+      required: [id, repeat_model]
+      properties:
+        id:
+          type: string
+          description: Press identifier.
+        web_width_pt:
+          type: number
+          nullable: true
+          description: Usable web width in points (web presses only).
+        repeat_model:
+          oneOf:
+            - $ref: "#/components/schemas/GearedRepeatModel"
+            - $ref: "#/components/schemas/ServoRepeatModel"
+            - $ref: "#/components/schemas/DigitalWebRepeatModel"
+            - $ref: "#/components/schemas/DigitalSheetRepeatModel"
+            - $ref: "#/components/schemas/OffsetSheetRepeatModel"
+          discriminator:
+            propertyName: type
+          description: How repeats are constrained by the press type.
+        usable_margin_top_pt:
+          type: number
+          default: 0
+          description: Top unusable margin in points.
+        usable_margin_bottom_pt:
+          type: number
+          default: 0
+        usable_margin_left_pt:
+          type: number
+          default: 0
+        usable_margin_right_pt:
+          type: number
+          default: 0
+        gap_around_pt:
+          type: number
+          default: 0
+          description: Minimum gap in the around-cylinder direction in points.
+        gap_across_pt:
+          type: number
+          default: 0
+          description: Minimum gap across-web in points.
+        max_colors:
+          type: integer
+          default: 4
+          description: Maximum ink stations per form.
+        material_cost_per_pt2:
+          type: number
+          default: 0
+          description: Material cost per square point.
+        makeready_cost:
+          type: number
+          default: 0
+        plate_cost:
+          type: number
+          default: 0
+
+    GearedRepeatModel:
+      type: object
+      required: [type, gear_set]
+      properties:
+        type:
+          type: string
+          enum: [geared]
+        gear_set:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [teeth, circular_pitch_pt]
+            properties:
+              teeth:
+                type: integer
+                minimum: 1
+                description: Number of gear teeth.
+              circular_pitch_pt:
+                type: number
+                description: Circular pitch in points (π / diametral_pitch).
+
+    ServoRepeatModel:
+      type: object
+      required: [type, min_repeat_pt, max_repeat_pt]
+      properties:
+        type:
+          type: string
+          enum: [servo]
+        min_repeat_pt:
+          type: number
+          description: Minimum achievable repeat in points.
+        max_repeat_pt:
+          type: number
+          description: Maximum achievable repeat in points.
+
+    DigitalWebRepeatModel:
+      type: object
+      required: [type, max_frame_pt]
+      properties:
+        type:
+          type: string
+          enum: [digital-web]
+        max_frame_pt:
+          type: number
+          description: Maximum impression length in points.
+        lane_limit:
+          type: integer
+          default: 1
+          description: Maximum lanes across web width.
+
+    DigitalSheetRepeatModel:
+      type: object
+      required: [type, sheet_width_pt, sheet_height_pt]
+      properties:
+        type:
+          type: string
+          enum: [digital-sheet]
+        sheet_width_pt:
+          type: number
+        sheet_height_pt:
+          type: number
+
+    OffsetSheetRepeatModel:
+      type: object
+      required: [type, sheet_width_pt, sheet_height_pt]
+      properties:
+        type:
+          type: string
+          enum: [offset-sheet]
+        sheet_width_pt:
+          type: number
+        sheet_height_pt:
+          type: number
+
+    Availability:
+      type: object
+      description: Optional on-hand inventory snapshot for feasibility constraints.
+      properties:
+        substrates:
+          type: array
+          items:
+            type: object
+            required: [id, width_pt, qty_on_hand]
+            properties:
+              id:
+                type: string
+              width_pt:
+                type: number
+              height_pt:
+                type: number
+                nullable: true
+              qty_on_hand:
+                type: integer
+                minimum: 0
+        dies:
+          type: array
+          items:
+            type: object
+            required: [id, qty]
+            properties:
+              id:
+                type: string
+              mounted_on_press_id:
+                type: string
+                nullable: true
+              qty:
+                type: integer
+                minimum: 1
+        plates:
+          type: array
+          items:
+            type: object
+            required: [id]
+            properties:
+              id:
+                type: string
+              teeth:
+                type: integer
+                nullable: true
+              repeat_pt:
+                type: number
+                nullable: true
+        presses:
+          type: array
+          items:
+            type: object
+            required: [id]
+            properties:
+              id:
+                type: string
+              available_from:
+                type: string
+                nullable: true
+              available_to:
+                type: string
+                nullable: true
+
+    ObjectiveWeights:
+      type: object
+      description: Relative weights for multi-objective solver. Zero disables a term.
+      properties:
+        waste:
+          type: number
+          default: 1.0
+          description: Weight for substrate waste %.
+        material_cost:
+          type: number
+          default: 0.5
+        run_time:
+          type: number
+          default: 0.2
+        plate_count:
+          type: number
+          default: 0.5
+        overrun_tolerance:
+          type: number
+          default: 0.1
+          description: Acceptable overrun fraction (0.1 = 10% over quantity is OK).
+        changeover_penalty:
+          type: number
+          default: 0.3

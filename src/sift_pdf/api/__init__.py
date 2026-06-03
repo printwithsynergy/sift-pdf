@@ -1,0 +1,1 @@
+"""SiftPDF FastAPI application package."""

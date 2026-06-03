@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+*.so
+*.dylib
+wheels/
+*.whl
+
+# Virtual envs / uv
+.venv/
+venv/
+env/
+.uv/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Reports (generated at runtime)
+reports/
+
+# Reference repos (read-only scratch; never commit)
+.reference/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# uv lock is committed; wheel artifacts are not
+*.dist-info/

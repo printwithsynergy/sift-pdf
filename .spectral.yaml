@@ -1,0 +1,6 @@
+extends:
+  - spectral:oas
+rules:
+  # nullable: true is an OAS 3.0.x pattern; we acknowledge it until the spec
+  # is migrated to full OAS 3.1 null-union syntax (type: [string, "null"]).
+  oas3-schema: warn
