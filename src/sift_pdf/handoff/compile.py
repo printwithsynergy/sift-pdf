@@ -115,4 +115,60 @@ def _explicit_plan(plan: SiftImposePlan) -> dict[str, Any]:
     return base
 
 
-__all__ = ["to_compile_impose_plan"]
+def to_cjd_envelope(
+    plan: SiftImposePlan,
+    source_refs: dict[str, str],
+) -> dict[str, Any]:
+    """Build a compile-pdf CJD (Compile Job Description) envelope.
+
+    Chains steps in compile-pdf's canonical order:
+      1. compose — maps each job's source PDF into the plan's cell references
+      2. marks   — registration/crop/bearer/eye marks (only if marks_intent set)
+      3. impose  — places cells according to the translated ImposePlan
+
+    source_refs: mapping from Job.id to source PDF URL or path. Jobs not in
+    source_refs are omitted from the compose step (tolerated for partial plans).
+    """
+    if not source_refs:
+        raise ValueError("to_cjd_envelope: source_refs must not be empty.")
+
+    steps: list[dict[str, Any]] = []
+
+    # 1. compose
+    steps.append(
+        {
+            "type": "compose",
+            "sources": [
+                {"source_ref": ref, "url": url} for ref, url in source_refs.items()
+            ],
+        }
+    )
+
+    # 2. marks (optional)
+    if plan.marks_intent:
+        steps.append(
+            {
+                "type": "marks",
+                "registration_marks": plan.marks_intent.registration_marks,
+                "crop_marks": plan.marks_intent.crop_marks,
+                "bearer_bars": plan.marks_intent.bearer_bars,
+                "eye_marks": plan.marks_intent.eye_marks,
+            }
+        )
+
+    # 3. impose
+    steps.append(
+        {
+            "type": "impose",
+            "plan": to_compile_impose_plan(plan),
+        }
+    )
+
+    return {
+        "schema_version": "1.0.0",
+        "sift_cache_key": plan.cache_key,
+        "steps": steps,
+    }
+
+
+__all__ = ["to_compile_impose_plan", "to_cjd_envelope"]
