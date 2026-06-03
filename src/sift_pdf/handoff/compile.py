@@ -138,9 +138,7 @@ def to_cjd_envelope(
     steps.append(
         {
             "type": "compose",
-            "sources": [
-                {"source_ref": ref, "url": url} for ref, url in source_refs.items()
-            ],
+            "sources": [{"source_ref": ref, "url": url} for ref, url in source_refs.items()],
         }
     )
 

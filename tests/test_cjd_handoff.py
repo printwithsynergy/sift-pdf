@@ -51,12 +51,8 @@ def _explicit_plan() -> SiftImposePlan:
         sheet=SheetSpec(width_pt=612.0, height_pt=792.0),
         cell=CellSpec(width_pt=144.0, height_pt=144.0),
         explicit_placements=[
-            ExplicitPlacement(
-                source_ref="sku-1", x0_pt=0.0, y0_pt=0.0, x1_pt=144.0, y1_pt=144.0
-            ),
-            ExplicitPlacement(
-                source_ref="sku-2", x0_pt=150.0, y0_pt=0.0, x1_pt=294.0, y1_pt=144.0
-            ),
+            ExplicitPlacement(source_ref="sku-1", x0_pt=0.0, y0_pt=0.0, x1_pt=144.0, y1_pt=144.0),
+            ExplicitPlacement(source_ref="sku-2", x0_pt=150.0, y0_pt=0.0, x1_pt=294.0, y1_pt=144.0),
         ],
         waste_pct=30.0,
         material_area_pt2=612.0 * 792.0,
