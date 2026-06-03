@@ -169,9 +169,8 @@ class SiftImposePlan(BaseModel):
     cell: CellSpec
     marks_zone: MarksZoneSpec = Field(default_factory=MarksZoneSpec)
 
-    # Layout — exactly one of grid_layout or explicit_placements is set.
-    # grid_layout: T1 uniform grid (stagger_mode="none").
-    # explicit_placements: T1-stagger, T2-gang, T3-nest, or T1-stagger fallback.
+    # Layout: at least one must be set. Both may coexist for stagger plans where
+    # grid_layout carries row/col metadata and explicit_placements carries positions.
     grid_layout: GridLayout | None = None
     explicit_placements: list[ExplicitPlacement] | None = None
 
@@ -201,7 +200,7 @@ class SiftImposePlan(BaseModel):
     @model_validator(mode="after")
     def _check_layout(self) -> SiftImposePlan:
         if self.grid_layout is None and self.explicit_placements is None:
-            raise ValueError("Exactly one of grid_layout or explicit_placements must be set.")
+            raise ValueError("At least one of grid_layout or explicit_placements must be set.")
         return self
 
 
