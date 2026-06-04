@@ -10,12 +10,44 @@ permissions:
   contents: read
 
 jobs:
+  security:
+    name: security scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.4.20"
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install project (with dev extras)
+        run: uv sync --extra dev
+
+      - name: Install bandit + semgrep
+        run: uv run pip install bandit semgrep
+
+      - name: Bandit (medium severity / medium confidence)
+        run: uv run bandit -r src/ -ll -ii
+
+      - name: Semgrep (security-audit + secrets + python)
+        run: uv run semgrep --config p/security-audit --config p/secrets --config p/python src/ --error
+
   lint-typecheck-test:
     name: lint + typecheck + test
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: security
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -56,6 +88,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
