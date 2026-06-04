@@ -4,9 +4,23 @@ All notable changes to sift-pdf are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.1] — 2026-06-04
+
+### Security
+
+- **CI hardening**: Added `persist-credentials: false` on every
+  `actions/checkout` step (all jobs) to prevent accidental credential
+  leakage in workflow logs or forked-PR contexts.
+- **CI hardening**: Added a new `security` job (blocking gate — other
+  jobs now `needs: security`) that runs `bandit` and
+  `semgrep --config p/security-audit --config p/secrets --config p/python`
+  on `src/` on every push and pull-request. Baseline: 0 findings.
+- **Scan confirmation**: Full semgrep (security-audit + secrets + python),
+  bandit (medium/medium), and pip-audit runs against the locked dependency
+  set produced zero actionable findings for sift-pdf itself.
 
 ### Added
+
 - `DielineRefDie` support in T2 gang and T3 nest solvers: when the availability
   snapshot includes shape info (`width_pt`/`height_pt` or `polygon_points`) on the
   matching `DieStock` entry, the die is resolved and placed like any rect or polygon
@@ -18,6 +32,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     `qty = 0`.
   - `allowed_substrate_ids`: raises `ValueError` if no listed substrate has
     `qty_on_hand >= 1` when an availability snapshot is provided.
+
+### Changed
+
+- Bumped `version` in `pyproject.toml` and `src/sift_pdf/version.py`
+  from `0.1.0` to `0.1.1`.
 
 ## [0.1.0] — 2026-06-03
 

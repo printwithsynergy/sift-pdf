@@ -1,6 +1,6 @@
 [project]
 name = "sift-pdf"
-version = "0.1.0"
+version = "0.1.1"
 description = "SiftPDF — stateless imposition planning solver for the Print With Synergy stack. Produces ImposePlans (grid, stagger, gang, nest) for compile-pdf to execute."
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }

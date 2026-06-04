@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 SOLVE_SCHEMA_VERSION = "1.0.0"
 SUGGEST_SCHEMA_VERSION = "1.0.0"
