@@ -33,7 +33,14 @@ from sift_pdf.schemas.impose_plan import (
     SiftImposePlan,
     SubstrateChoice,
 )
-from sift_pdf.schemas.jobs import Availability, Job, ObjectiveWeights, RectDie
+from sift_pdf.schemas.jobs import (
+    Availability,
+    DielineRefDie,
+    DieStock,
+    Job,
+    ObjectiveWeights,
+    RectDie,
+)
 from sift_pdf.schemas.press import PressProfile
 from sift_pdf.solve.t1_repeat_snap import achievable_sheet, snap_repeat, usable_width
 from sift_pdf.version import VERSION as SIFT_VERSION
@@ -46,17 +53,40 @@ class _Cell(NamedTuple):
     h: float
 
 
-def _cell_from_job(job: Job, i: int) -> _Cell | None:
-    """Return _Cell for a rect-die job, None for unsupported shapes."""
-    die = job.die
-    if not isinstance(die, RectDie):
+def _resolve_dieline_rect(
+    die: DielineRefDie, bleed: float, availability: Availability | None
+) -> tuple[float, float] | None:
+    """Return (w, h) with bleed for a DielineRefDie if shape info is available."""
+    if availability is None:
         return None
-    return _Cell(
-        job_index=i,
-        source_ref=job.id,
-        w=die.width_pt + 2 * job.bleed_pt,
-        h=die.height_pt + 2 * job.bleed_pt,
-    )
+    stock: DieStock | None = next((d for d in availability.dies if d.id == die.die_id), None)
+    if stock is None:
+        return None
+    if stock.width_pt is not None and stock.height_pt is not None:
+        return stock.width_pt + 2 * bleed, stock.height_pt + 2 * bleed
+    if stock.polygon_points is not None and len(stock.polygon_points) >= 3:
+        xs = [p[0] for p in stock.polygon_points]
+        ys = [p[1] for p in stock.polygon_points]
+        return (max(xs) - min(xs)) + 2 * bleed, (max(ys) - min(ys)) + 2 * bleed
+    return None
+
+
+def _cell_from_job(job: Job, i: int, availability: Availability | None = None) -> _Cell | None:
+    """Return _Cell for a rect or resolved-dieline job, None for unsupported shapes."""
+    die = job.die
+    if isinstance(die, RectDie):
+        return _Cell(
+            job_index=i,
+            source_ref=job.id,
+            w=die.width_pt + 2 * job.bleed_pt,
+            h=die.height_pt + 2 * job.bleed_pt,
+        )
+    if isinstance(die, DielineRefDie):
+        dims = _resolve_dieline_rect(die, job.bleed_pt, availability)
+        if dims is None:
+            return None
+        return _Cell(job_index=i, source_ref=job.id, w=dims[0], h=dims[1])
+    return None
 
 
 def _form_dims(press: PressProfile, jobs: list[Job]) -> tuple[float, float, float | None]:
@@ -196,22 +226,51 @@ def solve_gang(
     Uses CP-SAT to allocate cell counts per SKU (minimising waste), then
     positions them via a greedy height-descending strip-packer.
 
-    Only rect-die jobs are supported; polygon/dieline-ref jobs are skipped.
+    Rect and DielineRefDie jobs are supported; DielineRefDie is resolved via
+    the availability snapshot (width_pt/height_pt or polygon bounding-box).
+    Polygon dies are skipped (not representable in the strip-packer as-is).
     mustNotGangWith constraints are enforced as hard CP-SAT constraints.
 
-    availability is accepted for interface compatibility with T1/T3 but not yet
-    used — substrate/die/press-slot constraints are planned for a future wave.
+    Availability hard constraints enforced:
+    - required_die_id: die must be present in availability.dies with qty >= 1.
+    - allowed_substrate_ids: at least one listed substrate must be in stock
+      (qty_on_hand >= 1) when availability is provided and the list is non-empty.
     """
-    # TODO(wave3): enforce availability.substrates, .dies, .presses constraints
     if not jobs:
         raise ValueError("At least one job is required for a gang solve.")
+
+    if availability is not None:
+        for job in jobs:
+            if job.required_die_id is not None:
+                stock = next((d for d in availability.dies if d.id == job.required_die_id), None)
+                if stock is None:
+                    raise ValueError(
+                        f"Required die '{job.required_die_id}' for job '{job.id}' "
+                        "not found in availability snapshot."
+                    )
+                if stock.qty < 1:
+                    raise ValueError(
+                        f"Required die '{job.required_die_id}' for job '{job.id}' "
+                        "is out of stock (qty=0)."
+                    )
+            if job.allowed_substrate_ids:
+                in_stock = [
+                    s
+                    for s in availability.substrates
+                    if s.id in job.allowed_substrate_ids and s.qty_on_hand >= 1
+                ]
+                if not in_stock:
+                    raise ValueError(
+                        f"No allowed substrate for job '{job.id}' is in stock "
+                        f"(allowed: {job.allowed_substrate_ids})."
+                    )
 
     sheet_w, sheet_h, repeat_pt = _form_dims(press, jobs)
     gap = max(press.gap_across_pt, press.gap_around_pt)
 
     cells: list[_Cell] = []
     for i, job in enumerate(jobs):
-        c = _cell_from_job(job, i)
+        c = _cell_from_job(job, i, availability)
         if c is not None:
             cells.append(c)
 

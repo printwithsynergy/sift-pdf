@@ -6,6 +6,19 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `DielineRefDie` support in T2 gang and T3 nest solvers: when the availability
+  snapshot includes shape info (`width_pt`/`height_pt` or `polygon_points`) on the
+  matching `DieStock` entry, the die is resolved and placed like any rect or polygon
+  die. Silently skipped if no availability snapshot is provided.
+- Optional shape fields on `DieStock` (`width_pt`, `height_pt`, `polygon_points`) for
+  `DielineRefDie` resolution; `qty` now accepts `0` (tracked-but-out-of-stock).
+- Availability hard-constraint enforcement in T2 and T3:
+  - `required_die_id`: raises `ValueError` if die is absent from the snapshot or has
+    `qty = 0`.
+  - `allowed_substrate_ids`: raises `ValueError` if no listed substrate has
+    `qty_on_hand >= 1` when an availability snapshot is provided.
+
 ## [0.1.0] — 2026-06-03
 
 Initial release. All three solver tiers and the full HTTP API surface.

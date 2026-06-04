@@ -5,12 +5,11 @@ Invariants (from CLAUDE.md):
 - Polygon bleed offset uses codex_pdf.geom.polygon_offset + Path.
   (cited: codex_pdf.geom.polygon_offset, codex_pdf.geom.Path)
 - Never write PDF bytes — that is compile-pdf's job.
-- DielineRefDie is not yet supported by T3; only rect and polygon dies.
 
 Solver strategy
 ---------------
 1. Determine form dims (sheet or web × snapped repeat).
-2. For each rect/polygon die job: build spyrrow Item with polygon shape.
+2. For each rect/polygon/dieline-ref die job: build spyrrow Item with polygon shape.
    - RectDie: simple rect polygon with bleed already in dimensions.
    - PolygonDie: use actual polygon points; bleed expanded via
      codex_pdf.geom.polygon_offset when pyclipr is available, otherwise
@@ -40,7 +39,15 @@ from sift_pdf.schemas.impose_plan import (
     SiftImposePlan,
     SubstrateChoice,
 )
-from sift_pdf.schemas.jobs import Availability, Job, ObjectiveWeights, PolygonDie, RectDie
+from sift_pdf.schemas.jobs import (
+    Availability,
+    DielineRefDie,
+    DieStock,
+    Job,
+    ObjectiveWeights,
+    PolygonDie,
+    RectDie,
+)
 from sift_pdf.schemas.press import PressProfile
 from sift_pdf.solve.t1_repeat_snap import achievable_sheet, snap_repeat, usable_width
 from sift_pdf.version import VERSION as SIFT_VERSION
@@ -86,7 +93,35 @@ def _polygon_with_bleed(
     return [(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)]
 
 
-def _item_shape_and_area(job: Job) -> tuple[list[tuple[float, float]], float] | None:
+def _resolve_dieline(
+    die: DielineRefDie, bleed: float, availability: Availability | None
+) -> tuple[list[tuple[float, float]], float] | None:
+    """Resolve a DielineRefDie to (shape, area) using the availability snapshot.
+
+    Returns None if the die cannot be resolved (no availability, die not found,
+    or die has no shape info).
+    """
+    if availability is None:
+        return None
+    stock: DieStock | None = next((d for d in availability.dies if d.id == die.die_id), None)
+    if stock is None:
+        return None
+    if stock.width_pt is not None and stock.height_pt is not None:
+        w = stock.width_pt + 2 * bleed
+        h = stock.height_pt + 2 * bleed
+        return [(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)], w * h
+    if stock.polygon_points is not None and len(stock.polygon_points) >= 3:
+        shape = _polygon_with_bleed(stock.polygon_points, bleed)
+        xs = [p[0] for p in shape]
+        ys = [p[1] for p in shape]
+        area = (max(xs) - min(xs)) * (max(ys) - min(ys))
+        return shape, max(area, 1.0)
+    return None
+
+
+def _item_shape_and_area(
+    job: Job, availability: Availability | None
+) -> tuple[list[tuple[float, float]], float] | None:
     """Return (polygon_shape_at_origin, area) including bleed, or None for unsupported."""
     die = job.die
     bleed = job.bleed_pt
@@ -103,11 +138,13 @@ def _item_shape_and_area(job: Job) -> tuple[list[tuple[float, float]], float] | 
         area = (max(xs) - min(xs)) * (max(ys) - min(ys))
         return shape, max(area, 1.0)
 
-    # DielineRefDie: not yet supported
+    if isinstance(die, DielineRefDie):
+        return _resolve_dieline(die, bleed, availability)
+
     return None
 
 
-def _die_max_height(job: Job) -> float:
+def _die_max_height(job: Job, availability: Availability | None = None) -> float:
     """Return the die height including bleed (for web repeat calculation)."""
     die = job.die
     bleed = job.bleed_pt
@@ -116,10 +153,19 @@ def _die_max_height(job: Job) -> float:
     if isinstance(die, PolygonDie):
         ys = [p[1] for p in die.points]
         return max(ys) - min(ys) + 2 * bleed
+    if isinstance(die, DielineRefDie) and availability is not None:
+        stock = next((d for d in availability.dies if d.id == die.die_id), None)
+        if stock is not None and stock.height_pt is not None:
+            return stock.height_pt + 2 * bleed
+        if stock is not None and stock.polygon_points is not None:
+            ys = [p[1] for p in stock.polygon_points]
+            return max(ys) - min(ys) + 2 * bleed
     return 0.0
 
 
-def _form_dims(press: PressProfile, jobs: list[Job]) -> tuple[float, float, float | None]:
+def _form_dims(
+    press: PressProfile, jobs: list[Job], availability: Availability | None = None
+) -> tuple[float, float, float | None]:
     """Return (sheet_w, sheet_h, repeat_pt_or_None) for the press."""
     sheet = achievable_sheet(press)
     if sheet:
@@ -131,7 +177,7 @@ def _form_dims(press: PressProfile, jobs: list[Job]) -> tuple[float, float, floa
 
     heights: list[float] = []
     for j in jobs:
-        h = _die_max_height(j)
+        h = _die_max_height(j, availability)
         if h > 0:
             heights.append(h)
     if not heights:
@@ -173,13 +219,46 @@ def solve_nest(
     height = sheet_h (sheet) or web_width_pt (web) and reads back AABB
     positions as ExplicitPlacements.
 
-    DielineRefDie jobs are silently skipped.
-    availability is accepted for interface compatibility with T1/T2 but not
-    yet used — substrate/die/press-slot constraints are planned for wave4.
+    DielineRefDie jobs are resolved via the availability snapshot when shape
+    info (width_pt/height_pt or polygon_points) is present on the matching
+    DieStock entry; silently skipped otherwise.
+
+    Availability hard constraints enforced:
+    - required_die_id: die must be present in availability.dies with qty >= 1.
+    - allowed_substrate_ids: at least one listed substrate must be in stock
+      (qty_on_hand >= 1) when availability is provided and the list is non-empty.
+
+    press-slot time-window constraints are accepted but not yet enforced
+    (planned for a future release).
     """
-    # TODO(wave4): enforce availability.substrates, .dies, .presses constraints
     if not jobs:
         raise ValueError("At least one job is required for a nest solve.")
+
+    if availability is not None:
+        for job in jobs:
+            if job.required_die_id is not None:
+                stock = next((d for d in availability.dies if d.id == job.required_die_id), None)
+                if stock is None:
+                    raise ValueError(
+                        f"Required die '{job.required_die_id}' for job '{job.id}' "
+                        "not found in availability snapshot."
+                    )
+                if stock.qty < 1:
+                    raise ValueError(
+                        f"Required die '{job.required_die_id}' for job '{job.id}' "
+                        "is out of stock (qty=0)."
+                    )
+            if job.allowed_substrate_ids:
+                in_stock = [
+                    s
+                    for s in availability.substrates
+                    if s.id in job.allowed_substrate_ids and s.qty_on_hand >= 1
+                ]
+                if not in_stock:
+                    raise ValueError(
+                        f"No allowed substrate for job '{job.id}' is in stock "
+                        f"(allowed: {job.allowed_substrate_ids})."
+                    )
 
     try:
         import spyrrow
@@ -189,7 +268,7 @@ def solve_nest(
             "Install with: pip install sift-pdf[nest]"
         ) from exc
 
-    sheet_w, sheet_h, repeat_pt = _form_dims(press, jobs)
+    sheet_w, sheet_h, repeat_pt = _form_dims(press, jobs, availability)
     form_area = sheet_w * sheet_h
 
     gap = max(press.gap_across_pt, press.gap_around_pt)
@@ -202,7 +281,7 @@ def solve_nest(
     item_job_map: dict[str, int] = {}
 
     for i, job in enumerate(jobs):
-        result = _item_shape_and_area(job)
+        result = _item_shape_and_area(job, availability)
         if result is None:
             continue
         shape, area = result
