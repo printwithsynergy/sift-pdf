@@ -45,6 +45,8 @@ def solve(
     """
     codex_pdf_version, geom_schema_version = _codex_versions()
 
+    from sift_pdf.version import NEST_ENGINE_FINGERPRINT
+
     cache_key = compute_cache_key(
         mode=mode,
         seed=seed,
@@ -55,6 +57,7 @@ def solve(
         objective=objective.model_dump() if objective else None,
         codex_pdf_version=codex_pdf_version,
         geom_schema_version=geom_schema_version,
+        nest_engine_fingerprint=NEST_ENGINE_FINGERPRINT if mode == "nest" else "",
     )
 
     cached = cache_get(cache_key)
@@ -129,13 +132,13 @@ def _dispatch(
         )
     if mode == "nest":
         try:
-            from sift_pdf.solve.t3_nest import solve_nest  # type: ignore[import-untyped]
+            from sift_pdf.solve.t3_nest import solve_nest
         except ImportError as exc:
             raise RuntimeError(
                 "T3 nest solver requires the [nest] extra (spyrrow). "
                 "Install with: pip install sift-pdf[nest]"
             ) from exc
-        return solve_nest(  # type: ignore[no-any-return]
+        return solve_nest(
             jobs,
             press,
             availability,

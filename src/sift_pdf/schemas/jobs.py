@@ -104,7 +104,18 @@ class SubstrateStock(_Strict):
 class DieStock(_Strict):
     id: str
     mounted_on_press_id: str | None = None
-    qty: int = Field(..., ge=1)
+    qty: int = Field(..., ge=0, description="Quantity on hand; 0 = tracked but out of stock.")
+    # Optional shape info — required to resolve DielineRefDie in T2/T3 solvers.
+    width_pt: PositiveFloat | None = Field(
+        default=None, description="Rect die width in pts (for DielineRefDie resolution)."
+    )
+    height_pt: PositiveFloat | None = Field(
+        default=None, description="Rect die height in pts (for DielineRefDie resolution)."
+    )
+    polygon_points: list[tuple[float, float]] | None = Field(
+        default=None,
+        description="Polygon die ring [[x,y],...] (for DielineRefDie resolution).",
+    )
 
 
 class PlateStock(_Strict):
