@@ -52,13 +52,16 @@ SiftPDF's output is handed to `compile-pdf.impose` for PDF generation.
 **Grid fast-path** (`stagger_mode="none"`): translate `SiftImposePlan.grid_layout` to
 compile-pdf's native `ImposePlan` dict (no pre-computed placements needed).
 
-**Stagger / gang / nest path**: requires compile-pdf ≥1.1.0 with the additive
-`explicit_placements` field on `ImposePlan` (cross-repo PR pending). Until merged,
-sift-pdf produces the correct plan; the PDF generation step is blocked.
+**Stagger / gang / nest path**: emits the additive `explicit_placements` list on
+`ImposePlan`, consumed by **compile-pdf-impose ≥ 0.2.0** (impose schema 1.1.0).
+The end-to-end handoff is unblocked — sift produces the plan and compile writes
+the PDF. (The `ImposePlan` wire `schema_version` stays `"1.0.0"`; the new fields
+are backward-compatible optional additions.)
 
-**Stagger in compile-pdf**: a first-class `stagger_mode` field on compile-pdf's
-`ImposePlan` is planned as a follow-on cross-repo PR so stagger intent is preserved
-through the writer layer (not just as pre-computed coordinates).
+**Stagger in compile-pdf**: compile-pdf-impose's `ImposePlan` now exposes a
+first-class `stagger_mode` field, and `handoff.compile._explicit_plan` forwards
+it, so the solver's stagger intent is preserved through the writer's lineage —
+not just as pre-computed coordinates.
 
 ## Surface audits (mechanical, CI-enforced)
 
