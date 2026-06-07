@@ -52,6 +52,13 @@ DieShape = Annotated[
 # --- Job / SKU ---------------------------------------------------------------
 
 
+# Typed attribute values usable as custom grouping keys. Covers every scalar a
+# caller's DB/MIS would carry on a SKU — strings (incl. ISO-8601 dates),
+# integers, floats, booleans, and explicit null. Grouping criteria
+# (schemas/grouping.py) reference these by attribute name.
+AttributeValue = str | int | float | bool | None
+
+
 class Job(BaseModel):
     """Single SKU to be planned."""
 
@@ -88,6 +95,16 @@ class Job(BaseModel):
     )
     required_die_id: str | None = Field(
         default=None, description="Must use this specific die ID (from inventory)."
+    )
+    attributes: dict[str, AttributeValue] = Field(
+        default_factory=dict,
+        description=(
+            "Arbitrary typed grouping attributes — any scalar the caller's data "
+            "model carries (ISO-8601 dates as strings, booleans, numbers, free "
+            "strings, or null). Referenced by grouping_criteria on /v1/sift/solve "
+            "to partition (hard) or affinitise (soft) the layout. Ignored by the "
+            "solver unless a criterion names the key."
+        ),
     )
 
 
@@ -176,6 +193,7 @@ class ObjectiveWeights(BaseModel):
 
 
 __all__ = [
+    "AttributeValue",
     "RectDie",
     "PolygonDie",
     "DielineRefDie",

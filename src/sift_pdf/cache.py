@@ -87,6 +87,7 @@ def compute_cache_key(
     codex_pdf_version: str,
     geom_schema_version: str,
     nest_engine_fingerprint: str = "",
+    grouping_sha256: str = "",
 ) -> str:
     """Compose the content-addressed cache key for a solve request.
 
@@ -94,15 +95,22 @@ def compute_cache_key(
     so the digest is reproducible across language implementations.
     nest_engine_fingerprint is only non-empty for mode='nest'; omitting it
     (empty string) leaves grid/gang cache keys unchanged.
+    grouping_sha256 carries the SOFT grouping criteria that reach the solver
+    (hard partitioning is already captured by jobs_sha256, since each bucket is
+    a distinct jobs list); it is only non-empty when soft criteria are present,
+    so ungrouped and hard-only cache keys are byte-identical to before.
     """
     parts = [
         _sha256_canonical(availability) if availability is not None else "none",
         str(budget_ms),
         codex_pdf_version,
         geom_schema_version,
-        _sha256_canonical(jobs),
-        mode,
     ]
+    # Alphabetical slot: "grouping_sha256" sorts after geom, before jobs.
+    # Only included when non-empty so non-soft solves keep their prior digest.
+    if grouping_sha256:
+        parts.append(grouping_sha256)
+    parts.extend([_sha256_canonical(jobs), mode])
     # Only include fingerprint when non-empty so grid/gang hashes are unchanged
     if nest_engine_fingerprint:
         parts.append(nest_engine_fingerprint)

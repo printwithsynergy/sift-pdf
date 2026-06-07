@@ -98,6 +98,32 @@ cache_key = SHA-256(
 Same inputs → same plan. Stochastic solvers (T3 nest) pin `seed` + `budget_ms`
 so the same request returns the cached plan.
 
+A conditional `grouping_sha256` component is appended (alphabetically, after
+`geom_schema_version`) **only** when a solve carries *soft* grouping criteria
+that reach the solver. Hard partitioning needs no new component — each bucket is
+a distinct jobs list, so `jobs_sha256` already separates buckets. Ungrouped and
+hard-only solves therefore keep byte-identical cache keys to before.
+
+## Custom grouping
+
+`POST /v1/sift/solve` accepts `grouping_criteria` — an open-ended list of rules
+over `Job.attributes` (any typed scalar: ISO-8601 date strings, booleans,
+numbers, free strings, null). Each `GroupingCriterion` declares its own mode:
+
+- **hard** — partition jobs by the attribute value; each bucket is solved as an
+  independent press form (`solve_grouped` in `solve/engine.py` reuses the
+  per-mode solvers + cache untouched). The response returns `groups` (one plan
+  per distinct value combination) instead of a single `plan`.
+- **soft** — bias the **gang** solver (T2) to keep same-value jobs on one form
+  via a weighted CP-SAT penalty on cross-value co-occurrence (no-op in
+  grid/nest for v1). `weight=0` disables.
+
+Multiple criteria compose: hard criteria form a composite partition key; soft
+criteria are forwarded as `(key, weight)` affinity pairs. Partitioning is a pure
+function (`schemas/grouping.py:partition_jobs`); buckets are emitted in
+deterministic key order. Ungrouped requests are fully backward-compatible
+(`plan` populated, `groups` null).
+
 ## Local dev
 
 ```bash
