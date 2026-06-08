@@ -249,3 +249,87 @@ def test_solve_unknown_mode_returns_400() -> None:
     r = client.post("/v1/sift/solve", json=_payload(mode="grid", stagger_mode="none"))
     # Sanity: valid mode still works
     assert r.status_code == 200
+
+
+# --- Custom grouping -------------------------------------------------------
+
+
+def _grouped_jobs() -> list[dict]:
+    return [
+        {
+            "id": f"sku-{i}",
+            "die": {"type": "rect", "width_pt": 288.0, "height_pt": 144.0},
+            "quantity": 1000,
+            "attributes": {"batch": batch},
+        }
+        for i, batch in enumerate(["a", "b", "a"])
+    ]
+
+
+def test_solve_ungrouped_keeps_plan_shape() -> None:
+    body = client.post("/v1/sift/solve", json=_payload()).json()
+    assert body["plan"] is not None
+    assert body.get("groups") is None
+
+
+def test_solve_grouped_returns_groups() -> None:
+    p = _payload(jobs=_grouped_jobs(), grouping_criteria=[{"key": "batch", "mode": "hard"}])
+    r = client.post("/v1/sift/solve", json=p)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["plan"] is None
+    assert body["groups"] is not None
+    keys = [g["group_key"] for g in body["groups"]]
+    assert {"batch": "a"} in keys and {"batch": "b"} in keys
+    assert len(body["groups"]) == 2
+    for g in body["groups"]:
+        assert g["plan"]["mode"] == "grid"
+
+
+def test_solve_grouped_cache_hit_on_replay() -> None:
+    p = _payload(jobs=_grouped_jobs(), grouping_criteria=[{"key": "batch", "mode": "hard"}])
+    client.post("/v1/sift/solve", json=p)
+    r2 = client.post("/v1/sift/solve", json=p)
+    assert r2.json()["cache_hit"] is True
+
+
+def test_solve_grouped_composite_cache_key_header() -> None:
+    p = _payload(jobs=_grouped_jobs(), grouping_criteria=[{"key": "batch", "mode": "hard"}])
+    r = client.post("/v1/sift/solve", json=p)
+    assert len(r.headers["x-sift-cache-key"]) == 64
+
+
+def test_solve_grouped_missing_error_returns_422() -> None:
+    jobs = [
+        {
+            "id": "sku-x",
+            "die": {"type": "rect", "width_pt": 288.0, "height_pt": 144.0},
+            "quantity": 1000,
+            "attributes": {},
+        }
+    ]
+    p = _payload(jobs=jobs, grouping_criteria=[{"key": "batch", "missing": "error"}])
+    r = client.post("/v1/sift/solve", json=p)
+    assert r.status_code == 422
+
+
+def test_solve_mixed_hard_and_soft_criteria() -> None:
+    p = _payload(
+        jobs=_grouped_jobs(),
+        mode="gang",
+        press_profile={
+            "id": "sheet",
+            "repeat_model": {
+                "type": "digital-sheet",
+                "sheet_width_pt": 864.0,
+                "sheet_height_pt": 576.0,
+            },
+        },
+        grouping_criteria=[
+            {"key": "batch", "mode": "hard"},
+            {"key": "batch", "mode": "soft", "weight": 1.0},
+        ],
+    )
+    r = client.post("/v1/sift/solve", json=p)
+    assert r.status_code == 200
+    assert r.json()["groups"] is not None

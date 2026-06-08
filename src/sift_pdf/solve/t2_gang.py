@@ -26,6 +26,7 @@ from typing import NamedTuple
 from codex_pdf.geom import GEOM_SCHEMA_VERSION, Box
 from ortools.sat.python import cp_model
 
+from sift_pdf.cache import canonicalize
 from sift_pdf.schemas.impose_plan import (
     CellSpec,
     ExplicitPlacement,
@@ -116,11 +117,18 @@ def _allocate(
     objective: ObjectiveWeights | None,
     seed: int,
     budget_ms: int,
+    soft_penalties: list[tuple[int, int, int]] | None = None,
 ) -> list[int]:
     """CP-SAT quantity allocation. Returns n[i] for each cell index.
 
     Gap enforcement is handled downstream by the strip-packer; the area
     constraint here is conservative (cell bounding-box areas only).
+
+    ``soft_penalties`` is a list of ``(i, j, penalty)`` triples from soft
+    grouping criteria: a penalty is subtracted from the objective when cells
+    ``i`` and ``j`` (which differ on a soft attribute value) are both present on
+    the form, biasing the solver toward homogeneous forms without forbidding a
+    mix. Empty/None leaves the objective unchanged.
     """
     obj = objective or ObjectiveWeights()
     model = cp_model.CpModel()
@@ -148,7 +156,20 @@ def _allocate(
 
     # Objective: maximise utilised area (weighted by waste weight)
     w = max(1, round(obj.waste * 1000))
-    model.maximize(sum(n[i] * areas[i] * w for i in range(len(cells))))
+    objective_terms = [n[i] * areas[i] * w for i in range(len(cells))]
+
+    # Soft-affinity penalties: subtract when two differing-value cells co-occur.
+    # mix_ij is forced to 1 only when both are used (used[i]+used[j]-1); the
+    # solver otherwise drives it to 0 since the term is subtracted from a
+    # maximisation. A nudge, not a hard constraint.
+    for pair_idx, (i, j, penalty) in enumerate(soft_penalties or []):
+        if i >= len(cells) or j >= len(cells) or penalty <= 0:
+            continue
+        mix = model.new_bool_var(f"mix{pair_idx}")
+        model.add(mix >= used[i] + used[j] - 1)
+        objective_terms.append(-penalty * mix)
+
+    model.maximize(sum(objective_terms))
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = budget_ms / 1000.0
@@ -220,6 +241,7 @@ def solve_gang(
     seed: int,
     budget_ms: int,
     cache_key: str,
+    soft_affinity: list[tuple[str, float]] | None = None,
 ) -> SiftImposePlan:
     """Solve a T2 multi-SKU gang layout.
 
@@ -230,6 +252,11 @@ def solve_gang(
     the availability snapshot (width_pt/height_pt or polygon bounding-box).
     Polygon dies are skipped (not representable in the strip-packer as-is).
     mustNotGangWith constraints are enforced as hard CP-SAT constraints.
+
+    ``soft_affinity`` is a list of ``(attribute_key, weight)`` pairs from soft
+    grouping criteria: the solver is biased to avoid placing cells with
+    differing values for those attributes on the same form (a weighted
+    objective penalty, not a hard rule). Empty/None has no effect.
 
     Availability hard constraints enforced:
     - required_die_id: die must be present in availability.dies with qty >= 1.
@@ -291,6 +318,27 @@ def solve_gang(
 
     form_area = sheet_w * sheet_h
 
+    # Soft-affinity penalties: for each cell pair that differs on a soft
+    # attribute value, accumulate a weighted penalty (matched to the waste-weight
+    # 1000x scale used inside _allocate) so the solver prefers homogeneous forms.
+    soft_penalties: list[tuple[int, int, int]] = []
+    if soft_affinity:
+
+        def _soft_vals(k: int) -> dict[str, object]:
+            attrs = jobs[cells[k].job_index].attributes
+            return {key: canonicalize(attrs.get(key)) for key, _ in soft_affinity}
+
+        cell_vals = [_soft_vals(k) for k in range(len(cells))]
+        for a in range(len(cells)):
+            for b in range(a + 1, len(cells)):
+                pen = sum(
+                    max(1, round(weight * 1000))
+                    for key, weight in soft_affinity
+                    if weight > 0 and cell_vals[a][key] != cell_vals[b][key]
+                )
+                if pen > 0:
+                    soft_penalties.append((a, b, pen))
+
     counts = _allocate(
         cells=cells,
         form_area=form_area,
@@ -298,6 +346,7 @@ def solve_gang(
         objective=objective,
         seed=seed,
         budget_ms=budget_ms,
+        soft_penalties=soft_penalties,
     )
 
     placements = _strip_pack(cells, counts, sheet_w, sheet_h, gap)
