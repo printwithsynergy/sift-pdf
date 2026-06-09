@@ -11,7 +11,10 @@ FROM python:3.12-slim AS builder
 ARG SIFT_EXTRAS=""
 ENV UV_NO_CACHE=1
 
-WORKDIR /build
+# Build at /app (the same path the runtime stage uses). uv records absolute paths
+# in the venv (script shebangs + the editable install's source location), so the
+# build and runtime WORKDIR must match or the copied venv points at a missing /build.
+WORKDIR /app
 RUN pip install --no-cache-dir uv
 
 # README.md is referenced by pyproject (`readme = "README.md"`); hatchling needs it
@@ -43,7 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends tini && \
 RUN useradd --uid 10001 --no-create-home --shell /sbin/nologin sift
 
 WORKDIR /app
-COPY --from=builder /build/.venv /app/.venv
+COPY --from=builder /app/.venv /app/.venv
 COPY src/ ./src/
 COPY schemas/ ./schemas/
 
@@ -57,4 +60,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 EXPOSE 8100
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["uvicorn", "sift_pdf.api.main:app", "--host", "0.0.0.0", "--port", "8100"]
+# Invoke via `python -m` so it works regardless of the venv launcher script shebang.
+CMD ["python", "-m", "uvicorn", "sift_pdf.api.main:app", "--host", "0.0.0.0", "--port", "8100"]
