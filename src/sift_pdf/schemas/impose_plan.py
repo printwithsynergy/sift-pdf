@@ -6,8 +6,9 @@ adds solver metadata, substrate choice, metrics, and stagger support.
 
 Handoff to compile-pdf happens via sift_pdf.handoff.compile, which translates
 this document into compile-pdf's ImposePlan shape (grid fast-path) or the
-explicit-placements mode (stagger / gang / nest — requires compile-pdf ≥1.1.0
-with the additive explicit_placements field).
+explicit-placements mode (stagger / gang / nest — consumed by
+compile-pdf-impose >= 0.2.0, which ships the additive explicit_placements +
+stagger_mode fields).
 """
 
 from __future__ import annotations
@@ -76,11 +77,10 @@ class GridLayout(_Strict):
     ImposePlan grid params via handoff.compile.
 
     For stagger_mode != "none", the explicit_placements field on SiftImposePlan
-    carries the pre-computed positions. Handoff requires compile-pdf ≥1.1.0
-    with the explicit_placements field (cross-repo PR).
-
-    Future: compile-pdf may grow a native stagger_mode field so the semantic
-    intent is preserved through the writer layer — see CLAUDE.md.
+    carries the pre-computed positions. Handoff emits these to compile-pdf-impose
+    >= 0.2.0, whose ImposePlan accepts the explicit_placements list and records
+    the stagger intent via its first-class stagger_mode field — so the semantic
+    intent is preserved through the writer layer, not just the coordinates.
     """
 
     rows: int = Field(..., gt=0)

@@ -7,9 +7,11 @@ Grid fast-path (stagger_mode="none"):
   calls codex.tile_grid internally; no pre-computed placements needed.
 
 Explicit-placements path (stagger, gang, nest):
-  Emit an extended compile-pdf ImposePlan with ``explicit_placements`` list.
-  Requires compile-pdf ≥1.1.0 with the additive explicit_placements field
-  (cross-repo PR — see CLAUDE.md § Cross-repo PRs).
+  Emit an extended compile-pdf ImposePlan with ``explicit_placements`` list
+  plus the ``stagger_mode`` intent field. Both are available as of
+  ``compile-pdf-impose`` 0.2.0 (impose schema 1.1.0); the ``ImposePlan`` wire
+  ``schema_version`` itself stays ``"1.0.0"`` — the additions are backward-
+  compatible optional fields.
 
 The returned dict is suitable for:
   compile-pdf CLI:  compile-pdf impose apply --plan <json>
@@ -27,7 +29,8 @@ def to_compile_impose_plan(plan: SiftImposePlan) -> dict[str, Any]:
     """Return a compile-pdf-compatible ImposePlan dict from a SiftImposePlan.
 
     For grid (no stagger): uses compile-pdf's native grid params.
-    For stagger / gang / nest: uses explicit_placements (requires compile-pdf ≥1.1.0).
+    For stagger / gang / nest: uses explicit_placements + stagger_mode
+    (consumed by compile-pdf-impose >= 0.2.0).
     """
     gl = plan.grid_layout
 
@@ -68,10 +71,12 @@ def _grid_plan(plan: SiftImposePlan, gl: Any) -> dict[str, Any]:
 
 
 def _explicit_plan(plan: SiftImposePlan) -> dict[str, Any]:
-    """Extended compile-pdf ImposePlan with explicit_placements.
+    """Extended compile-pdf ImposePlan with explicit_placements + stagger_mode.
 
-    Requires compile-pdf ≥1.1.0. Until that cross-repo PR lands, this dict
-    will be rejected by compile-pdf's schema validator.
+    Consumed by compile-pdf-impose >= 0.2.0, whose ``ImposePlan`` exposes the
+    additive ``explicit_placements`` list and first-class ``stagger_mode`` field.
+    ``stagger_mode`` records the solver's intent so it survives in the writer's
+    lineage even though the resolved coordinates already encode the offsets.
     """
     placements: list[dict[str, Any]] = []
     if plan.explicit_placements:
@@ -112,7 +117,66 @@ def _explicit_plan(plan: SiftImposePlan) -> dict[str, Any]:
         }
     )
     base["explicit_placements"] = placements
+    # Preserve the solver's stagger intent for compile-pdf's lineage. gang/nest
+    # plans carry no grid_layout, so they report "none" (their offsets are
+    # already baked into explicit_placements).
+    base["stagger_mode"] = plan.grid_layout.stagger_mode if plan.grid_layout else "none"
     return base
 
 
-__all__ = ["to_compile_impose_plan"]
+def to_cjd_envelope(
+    plan: SiftImposePlan,
+    source_refs: dict[str, str],
+) -> dict[str, Any]:
+    """Build a compile-pdf CJD (Compile Job Description) envelope.
+
+    Chains steps in compile-pdf's canonical order:
+      1. compose — maps each job's source PDF into the plan's cell references
+      2. marks   — registration/crop/bearer/eye marks (only if marks_intent set)
+      3. impose  — places cells according to the translated ImposePlan
+
+    source_refs: mapping from Job.id to source PDF URL or path. Jobs not in
+    source_refs are omitted from the compose step (tolerated for partial plans).
+    """
+    if not source_refs:
+        raise ValueError("to_cjd_envelope: source_refs must not be empty.")
+
+    steps: list[dict[str, Any]] = []
+
+    # 1. compose
+    steps.append(
+        {
+            "type": "compose",
+            "sources": [{"source_ref": ref, "url": url} for ref, url in source_refs.items()],
+        }
+    )
+
+    # 2. marks (optional) — only emit if at least one mark flag is True
+    mi = plan.marks_intent
+    if mi is not None and any([mi.registration_marks, mi.crop_marks, mi.bearer_bars, mi.eye_marks]):
+        steps.append(
+            {
+                "type": "marks",
+                "registration_marks": mi.registration_marks,
+                "crop_marks": mi.crop_marks,
+                "bearer_bars": mi.bearer_bars,
+                "eye_marks": mi.eye_marks,
+            }
+        )
+
+    # 3. impose
+    steps.append(
+        {
+            "type": "impose",
+            "plan": to_compile_impose_plan(plan),
+        }
+    )
+
+    return {
+        "schema_version": "1.0.0",
+        "sift_cache_key": plan.cache_key,
+        "steps": steps,
+    }
+
+
+__all__ = ["to_compile_impose_plan", "to_cjd_envelope"]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 SOLVE_SCHEMA_VERSION = "1.0.0"
 SUGGEST_SCHEMA_VERSION = "1.0.0"
@@ -18,3 +18,7 @@ SOLVER_SCHEMA_VERSIONS: dict[str, str] = {
     "suggest": SUGGEST_SCHEMA_VERSION,
     "estimate": ESTIMATE_SCHEMA_VERSION,
 }
+
+# Rotate this pin whenever the spyrrow wheel version changes to invalidate
+# nest-mode cache keys that may have been produced by an earlier engine.
+NEST_ENGINE_FINGERPRINT = "spyrrow-0.9.0"

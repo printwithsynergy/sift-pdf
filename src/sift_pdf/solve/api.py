@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException, Request
-from pydantic import BaseModel, Field
+import hashlib
 
+from fastapi import APIRouter, Header, HTTPException, Request
+from pydantic import BaseModel, Field, model_validator
+
+from sift_pdf.schemas.grouping import AttributeValue, GroupingCriterion, GroupingError
 from sift_pdf.schemas.impose_plan import (
     BleedHandling,
     SiftImposePlan,
@@ -13,7 +16,7 @@ from sift_pdf.schemas.impose_plan import (
 )
 from sift_pdf.schemas.jobs import Availability, Job, ObjectiveWeights
 from sift_pdf.schemas.press import PressProfile
-from sift_pdf.solve.engine import _DEFAULT_BUDGET_MS, _DEFAULT_SEED, solve
+from sift_pdf.solve.engine import _DEFAULT_BUDGET_MS, _DEFAULT_SEED, solve, solve_grouped
 
 router = APIRouter()
 
@@ -60,13 +63,52 @@ class SolveRequest(BaseModel):
         ge=100,
         description="Solver time budget in milliseconds.",
     )
+    grouping_criteria: list[GroupingCriterion] | None = Field(
+        default=None,
+        description=(
+            "Custom grouping rules over Job.attributes. 'hard' criteria "
+            "partition jobs into independent press forms (one solved plan per "
+            "distinct value combination); 'soft' criteria bias the gang solver "
+            "to keep same-value jobs together. When present, the response "
+            "returns 'groups' instead of a single 'plan'. Supports any typed "
+            "attribute value (dates, booleans, numbers, strings)."
+        ),
+    )
+
+
+class GroupResult(BaseModel):
+    """One bucket of a grouped solve: its partition key + the plan for it."""
+
+    group_key: dict[str, AttributeValue] = Field(
+        ...,
+        description="The attribute values that define this group (hard criteria).",
+    )
+    plan: SiftImposePlan = Field(..., description="The solved layout for this group.")
+    cache_hit: bool = Field(default=False, description="True if served from cache.")
 
 
 class SolveResponse(BaseModel):
-    """Solve response envelope."""
+    """Solve response envelope.
 
-    plan: SiftImposePlan
+    Exactly one of ``plan`` (ungrouped solve) or ``groups`` (one plan per
+    grouped bucket) is populated. Ungrouped requests keep the original shape
+    (``plan`` set, ``groups`` null) for full backward compatibility.
+    """
+
+    plan: SiftImposePlan | None = Field(
+        default=None, description="The solved layout (ungrouped requests)."
+    )
+    groups: list[GroupResult] | None = Field(
+        default=None,
+        description="Per-group solved layouts (set when grouping_criteria is given).",
+    )
     cache_hit: bool = False
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> SolveResponse:
+        if (self.plan is None) == (self.groups is None):
+            raise ValueError("Exactly one of 'plan' or 'groups' must be set.")
+        return self
 
 
 @router.post("/solve", response_model=SolveResponse, summary="Solve an imposition layout")
@@ -90,9 +132,20 @@ async def solve_endpoint(
     Stagger layouts emit `explicit_placements` rather than `grid_layout` and
     require compile-pdf ≥1.1.0 (explicit-placements mode) for PDF generation.
 
+    **Custom grouping** via `grouping_criteria`: group jobs by any typed
+    `Job.attributes` value (dates, booleans, numbers, strings). `hard`
+    criteria partition jobs into independent press forms (the response returns
+    `groups`, one solved plan per distinct value combination); `soft` criteria
+    bias the gang solver to keep same-value jobs on the same form. Without
+    `grouping_criteria` the response is unchanged (`plan` populated).
+
+    The `X-Sift-Cache-Key` header carries the plan's cache key (ungrouped) or a
+    composite digest of the per-group cache keys (grouped).
+
     Responses:
       200: Plan solved (or cache hit).
       400: Invalid request geometry or press constraints.
+      422: Invalid grouping criteria (e.g. missing required attribute).
       501: Requested solver tier not available (missing optional dep).
     """
     # Header values override body values (deterministic pinning channel)
@@ -111,6 +164,22 @@ async def solve_endpoint(
             detail="Use POST /v1/sift/suggest for mode=suggest.",
         )
 
+    if payload.grouping_criteria:
+        content, cache_key = _solve_grouped(payload, seed, budget_ms)
+    else:
+        content, cache_key = _solve_single(payload, seed, budget_ms)
+
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(  # type: ignore[return-value]
+        content=content.model_dump(mode="json"),
+        status_code=200,
+        headers={"X-Sift-Cache-Key": cache_key},
+    )
+
+
+def _solve_single(payload: SolveRequest, seed: int, budget_ms: int) -> tuple[SolveResponse, str]:
+    """Ungrouped solve — returns (response, cache_key)."""
     try:
         plan, hit = solve(
             jobs=payload.jobs,
@@ -129,12 +198,43 @@ async def solve_endpoint(
     except RuntimeError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
 
-    from fastapi.responses import JSONResponse
+    return SolveResponse(plan=plan, cache_hit=hit), plan.cache_key
 
-    content = SolveResponse(plan=plan, cache_hit=hit)
-    headers = {"X-Sift-Cache-Key": plan.cache_key}
-    return JSONResponse(  # type: ignore[return-value]
-        content=content.model_dump(mode="json"),
-        status_code=200,
-        headers=headers,
-    )
+
+def _solve_grouped(payload: SolveRequest, seed: int, budget_ms: int) -> tuple[SolveResponse, str]:
+    """Grouped solve — one plan per hard-partition bucket. Returns (response, key)."""
+    assert payload.grouping_criteria is not None
+    try:
+        results = solve_grouped(
+            jobs=payload.jobs,
+            press=payload.press_profile,
+            mode=payload.mode,
+            grouping_criteria=payload.grouping_criteria,
+            availability=payload.availability,
+            objective=payload.objective,
+            seed=seed,
+            budget_ms=budget_ms,
+            stagger_mode=payload.stagger_mode,
+            stagger_offset_pt=payload.stagger_offset_pt,
+            bleed_handling=payload.bleed_handling,
+        )
+    except GroupingError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+
+    if not results:
+        raise HTTPException(
+            status_code=400,
+            detail="grouping_criteria produced no groups (all jobs skipped).",
+        )
+
+    groups = [
+        GroupResult(group_key=r.group_key, plan=r.plan, cache_hit=r.cache_hit) for r in results
+    ]
+    # Composite cache key: deterministic digest of the per-bucket keys.
+    composite = hashlib.sha256("|".join(g.plan.cache_key for g in groups).encode()).hexdigest()
+    response = SolveResponse(groups=groups, cache_hit=all(g.cache_hit for g in groups))
+    return response, composite

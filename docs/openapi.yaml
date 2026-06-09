@@ -305,13 +305,83 @@ components:
           default: 5000
           minimum: 100
           description: Solver time budget in milliseconds.
+        grouping_criteria:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/GroupingCriterion"
+          description: >-
+            Custom grouping rules over Job.attributes. 'hard' criteria partition
+            jobs into independent press forms (one plan per distinct value
+            combination, returned as 'groups'); 'soft' criteria bias the gang
+            solver to keep same-value jobs together. Omit for a single plan.
+
+    GroupingCriterion:
+      type: object
+      required: [key]
+      properties:
+        key:
+          type: string
+          description: Attribute name to group by (looked up in Job.attributes).
+        mode:
+          type: string
+          enum: [hard, soft]
+          default: hard
+          description: >-
+            'hard' partitions jobs into independent forms by this value; 'soft'
+            biases the solver to keep same-value jobs together without forbidding
+            a mix.
+        missing:
+          type: string
+          enum: [own_group, skip, error]
+          default: own_group
+          description: >-
+            How to treat a job lacking this attribute (hard criteria only):
+            'own_group' buckets it under null, 'skip' excludes it, 'error'
+            rejects the request (422).
+        bucket:
+          type: string
+          enum: [exact]
+          default: exact
+          description: Bucketing strategy for the value (currently exact-match only).
+        weight:
+          type: number
+          minimum: 0
+          default: 1.0
+          description: >-
+            Soft-affinity strength (soft criteria only); higher = stronger
+            preference against mixing values on one form. 0 disables.
+
+    GroupResult:
+      type: object
+      required: [group_key, plan, cache_hit]
+      properties:
+        group_key:
+          type: object
+          additionalProperties: true
+          description: The attribute values defining this group (hard criteria).
+        plan:
+          $ref: "#/components/schemas/SiftImposePlan"
+        cache_hit:
+          type: boolean
+          description: True if this group's plan was served from cache.
 
     SolveResponse:
       type: object
-      required: [plan, cache_hit]
+      required: [cache_hit]
+      description: >-
+        Exactly one of 'plan' (ungrouped) or 'groups' (one plan per grouped
+        bucket) is populated.
       properties:
         plan:
           $ref: "#/components/schemas/SiftImposePlan"
+          nullable: true
+        groups:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/GroupResult"
+          description: Per-group solved layouts (set when grouping_criteria is given).
         cache_hit:
           type: boolean
           description: True if this response was served from cache.
@@ -754,6 +824,15 @@ components:
           type: string
           nullable: true
           description: Must use this specific die ID from inventory.
+        attributes:
+          type: object
+          additionalProperties: true
+          default: {}
+          description: >-
+            Arbitrary typed grouping attributes (ISO-8601 dates as strings,
+            booleans, numbers, free strings, or null). Referenced by
+            grouping_criteria on /v1/sift/solve to partition or affinitise the
+            layout. Ignored unless a criterion names the key.
 
     RectDie:
       type: object

@@ -26,6 +26,7 @@ from typing import NamedTuple
 from codex_pdf.geom import GEOM_SCHEMA_VERSION, Box
 from ortools.sat.python import cp_model
 
+from sift_pdf.cache import canonicalize
 from sift_pdf.schemas.impose_plan import (
     CellSpec,
     ExplicitPlacement,
@@ -33,7 +34,14 @@ from sift_pdf.schemas.impose_plan import (
     SiftImposePlan,
     SubstrateChoice,
 )
-from sift_pdf.schemas.jobs import Availability, Job, ObjectiveWeights, RectDie
+from sift_pdf.schemas.jobs import (
+    Availability,
+    DielineRefDie,
+    DieStock,
+    Job,
+    ObjectiveWeights,
+    RectDie,
+)
 from sift_pdf.schemas.press import PressProfile
 from sift_pdf.solve.t1_repeat_snap import achievable_sheet, snap_repeat, usable_width
 from sift_pdf.version import VERSION as SIFT_VERSION
@@ -46,17 +54,40 @@ class _Cell(NamedTuple):
     h: float
 
 
-def _cell_from_job(job: Job, i: int) -> _Cell | None:
-    """Return _Cell for a rect-die job, None for unsupported shapes."""
-    die = job.die
-    if not isinstance(die, RectDie):
+def _resolve_dieline_rect(
+    die: DielineRefDie, bleed: float, availability: Availability | None
+) -> tuple[float, float] | None:
+    """Return (w, h) with bleed for a DielineRefDie if shape info is available."""
+    if availability is None:
         return None
-    return _Cell(
-        job_index=i,
-        source_ref=job.id,
-        w=die.width_pt + 2 * job.bleed_pt,
-        h=die.height_pt + 2 * job.bleed_pt,
-    )
+    stock: DieStock | None = next((d for d in availability.dies if d.id == die.die_id), None)
+    if stock is None:
+        return None
+    if stock.width_pt is not None and stock.height_pt is not None:
+        return stock.width_pt + 2 * bleed, stock.height_pt + 2 * bleed
+    if stock.polygon_points is not None and len(stock.polygon_points) >= 3:
+        xs = [p[0] for p in stock.polygon_points]
+        ys = [p[1] for p in stock.polygon_points]
+        return (max(xs) - min(xs)) + 2 * bleed, (max(ys) - min(ys)) + 2 * bleed
+    return None
+
+
+def _cell_from_job(job: Job, i: int, availability: Availability | None = None) -> _Cell | None:
+    """Return _Cell for a rect or resolved-dieline job, None for unsupported shapes."""
+    die = job.die
+    if isinstance(die, RectDie):
+        return _Cell(
+            job_index=i,
+            source_ref=job.id,
+            w=die.width_pt + 2 * job.bleed_pt,
+            h=die.height_pt + 2 * job.bleed_pt,
+        )
+    if isinstance(die, DielineRefDie):
+        dims = _resolve_dieline_rect(die, job.bleed_pt, availability)
+        if dims is None:
+            return None
+        return _Cell(job_index=i, source_ref=job.id, w=dims[0], h=dims[1])
+    return None
 
 
 def _form_dims(press: PressProfile, jobs: list[Job]) -> tuple[float, float, float | None]:
@@ -86,11 +117,18 @@ def _allocate(
     objective: ObjectiveWeights | None,
     seed: int,
     budget_ms: int,
+    soft_penalties: list[tuple[int, int, int]] | None = None,
 ) -> list[int]:
     """CP-SAT quantity allocation. Returns n[i] for each cell index.
 
     Gap enforcement is handled downstream by the strip-packer; the area
     constraint here is conservative (cell bounding-box areas only).
+
+    ``soft_penalties`` is a list of ``(i, j, penalty)`` triples from soft
+    grouping criteria: a penalty is subtracted from the objective when cells
+    ``i`` and ``j`` (which differ on a soft attribute value) are both present on
+    the form, biasing the solver toward homogeneous forms without forbidding a
+    mix. Empty/None leaves the objective unchanged.
     """
     obj = objective or ObjectiveWeights()
     model = cp_model.CpModel()
@@ -118,7 +156,20 @@ def _allocate(
 
     # Objective: maximise utilised area (weighted by waste weight)
     w = max(1, round(obj.waste * 1000))
-    model.maximize(sum(n[i] * areas[i] * w for i in range(len(cells))))
+    objective_terms = [n[i] * areas[i] * w for i in range(len(cells))]
+
+    # Soft-affinity penalties: subtract when two differing-value cells co-occur.
+    # mix_ij is forced to 1 only when both are used (used[i]+used[j]-1); the
+    # solver otherwise drives it to 0 since the term is subtracted from a
+    # maximisation. A nudge, not a hard constraint.
+    for pair_idx, (i, j, penalty) in enumerate(soft_penalties or []):
+        if i >= len(cells) or j >= len(cells) or penalty <= 0:
+            continue
+        mix = model.new_bool_var(f"mix{pair_idx}")
+        model.add(mix >= used[i] + used[j] - 1)
+        objective_terms.append(-penalty * mix)
+
+    model.maximize(sum(objective_terms))
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = budget_ms / 1000.0
@@ -190,28 +241,63 @@ def solve_gang(
     seed: int,
     budget_ms: int,
     cache_key: str,
+    soft_affinity: list[tuple[str, float]] | None = None,
 ) -> SiftImposePlan:
     """Solve a T2 multi-SKU gang layout.
 
     Uses CP-SAT to allocate cell counts per SKU (minimising waste), then
     positions them via a greedy height-descending strip-packer.
 
-    Only rect-die jobs are supported; polygon/dieline-ref jobs are skipped.
+    Rect and DielineRefDie jobs are supported; DielineRefDie is resolved via
+    the availability snapshot (width_pt/height_pt or polygon bounding-box).
+    Polygon dies are skipped (not representable in the strip-packer as-is).
     mustNotGangWith constraints are enforced as hard CP-SAT constraints.
 
-    availability is accepted for interface compatibility with T1/T3 but not yet
-    used — substrate/die/press-slot constraints are planned for a future wave.
+    ``soft_affinity`` is a list of ``(attribute_key, weight)`` pairs from soft
+    grouping criteria: the solver is biased to avoid placing cells with
+    differing values for those attributes on the same form (a weighted
+    objective penalty, not a hard rule). Empty/None has no effect.
+
+    Availability hard constraints enforced:
+    - required_die_id: die must be present in availability.dies with qty >= 1.
+    - allowed_substrate_ids: at least one listed substrate must be in stock
+      (qty_on_hand >= 1) when availability is provided and the list is non-empty.
     """
-    # TODO(wave3): enforce availability.substrates, .dies, .presses constraints
     if not jobs:
         raise ValueError("At least one job is required for a gang solve.")
+
+    if availability is not None:
+        for job in jobs:
+            if job.required_die_id is not None:
+                stock = next((d for d in availability.dies if d.id == job.required_die_id), None)
+                if stock is None:
+                    raise ValueError(
+                        f"Required die '{job.required_die_id}' for job '{job.id}' "
+                        "not found in availability snapshot."
+                    )
+                if stock.qty < 1:
+                    raise ValueError(
+                        f"Required die '{job.required_die_id}' for job '{job.id}' "
+                        "is out of stock (qty=0)."
+                    )
+            if job.allowed_substrate_ids:
+                in_stock = [
+                    s
+                    for s in availability.substrates
+                    if s.id in job.allowed_substrate_ids and s.qty_on_hand >= 1
+                ]
+                if not in_stock:
+                    raise ValueError(
+                        f"No allowed substrate for job '{job.id}' is in stock "
+                        f"(allowed: {job.allowed_substrate_ids})."
+                    )
 
     sheet_w, sheet_h, repeat_pt = _form_dims(press, jobs)
     gap = max(press.gap_across_pt, press.gap_around_pt)
 
     cells: list[_Cell] = []
     for i, job in enumerate(jobs):
-        c = _cell_from_job(job, i)
+        c = _cell_from_job(job, i, availability)
         if c is not None:
             cells.append(c)
 
@@ -232,6 +318,27 @@ def solve_gang(
 
     form_area = sheet_w * sheet_h
 
+    # Soft-affinity penalties: for each cell pair that differs on a soft
+    # attribute value, accumulate a weighted penalty (matched to the waste-weight
+    # 1000x scale used inside _allocate) so the solver prefers homogeneous forms.
+    soft_penalties: list[tuple[int, int, int]] = []
+    if soft_affinity:
+
+        def _soft_vals(k: int) -> dict[str, object]:
+            attrs = jobs[cells[k].job_index].attributes
+            return {key: canonicalize(attrs.get(key)) for key, _ in soft_affinity}
+
+        cell_vals = [_soft_vals(k) for k in range(len(cells))]
+        for a in range(len(cells)):
+            for b in range(a + 1, len(cells)):
+                pen = sum(
+                    max(1, round(weight * 1000))
+                    for key, weight in soft_affinity
+                    if weight > 0 and cell_vals[a][key] != cell_vals[b][key]
+                )
+                if pen > 0:
+                    soft_penalties.append((a, b, pen))
+
     counts = _allocate(
         cells=cells,
         form_area=form_area,
@@ -239,6 +346,7 @@ def solve_gang(
         objective=objective,
         seed=seed,
         budget_ms=budget_ms,
+        soft_penalties=soft_penalties,
     )
 
     placements = _strip_pack(cells, counts, sheet_w, sheet_h, gap)

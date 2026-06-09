@@ -89,6 +89,71 @@ def test_stagger_placement_fields() -> None:
     assert "flip_h" in ep
 
 
+# The exact field set compile-pdf-impose >= 0.2.0's ExplicitPlacement accepts.
+# row/col are optional on the consumer side, so sift omits them.
+_EXPECTED_PLACEMENT_KEYS = {
+    "source_ref",
+    "x0_pt",
+    "y0_pt",
+    "x1_pt",
+    "y1_pt",
+    "rotation",
+    "flip_h",
+    "flip_v",
+}
+
+
+def test_stagger_plan_forwards_stagger_mode() -> None:
+    """The solver's stagger intent must reach compile-pdf's ImposePlan."""
+    d = to_compile_impose_plan(_stagger_plan())
+    assert d["stagger_mode"] == "half-drop-x"
+
+
+def test_gang_nest_plan_reports_stagger_mode_none() -> None:
+    """Plans without a grid_layout (gang/nest) report stagger_mode='none'."""
+    plan = SiftImposePlan(
+        mode="nest",
+        tier="T3",
+        seed=7,
+        budget_ms=3000,
+        cache_key="d" * 64,
+        sift_version="0.1.0",
+        codex_geom_schema_version="1.1.0",
+        substrate=SubstrateChoice(sheet_width_pt=612.0, sheet_height_pt=792.0),
+        sheet=SheetSpec(width_pt=612.0, height_pt=792.0),
+        cell=CellSpec(width_pt=144.0, height_pt=144.0),
+        explicit_placements=[
+            ExplicitPlacement(source_ref="sku-1", x0_pt=0.0, y0_pt=0.0, x1_pt=144.0, y1_pt=144.0),
+        ],
+        waste_pct=30.0,
+        material_area_pt2=612.0 * 792.0,
+        plate_count=2,
+    )
+    d = to_compile_impose_plan(plan)
+    assert d["stagger_mode"] == "none"
+
+
+def test_explicit_placement_keys_match_compile_contract() -> None:
+    """Frozen shape: each emitted placement carries exactly the fields
+    compile-pdf-impose's ExplicitPlacement expects."""
+    d = to_compile_impose_plan(_stagger_plan())
+    for ep in d["explicit_placements"]:
+        assert set(ep) == _EXPECTED_PLACEMENT_KEYS
+
+
+def test_explicit_plan_parses_as_compile_imposeplan() -> None:
+    """Real cross-repo contract check: the emitted dict must validate against
+    compile-pdf-impose's ImposePlan when that package is installed (skipped
+    otherwise — sift does not take a hard dependency on the writer)."""
+    import pytest
+
+    layout_schema = pytest.importorskip("compile_pdf_impose.layout_schema")
+    parsed = layout_schema.ImposePlan.model_validate(to_compile_impose_plan(_stagger_plan()))
+    assert parsed.stagger_mode == "half-drop-x"
+    assert parsed.explicit_placements is not None
+    assert len(parsed.explicit_placements) == 2
+
+
 def test_explicit_plan_propagates_marks_zone() -> None:
     """_explicit_plan must use plan.marks_zone, not hardcoded zeros."""
     plan = SiftImposePlan(

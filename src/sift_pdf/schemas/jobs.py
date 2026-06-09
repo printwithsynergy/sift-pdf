@@ -52,6 +52,13 @@ DieShape = Annotated[
 # --- Job / SKU ---------------------------------------------------------------
 
 
+# Typed attribute values usable as custom grouping keys. Covers every scalar a
+# caller's DB/MIS would carry on a SKU — strings (incl. ISO-8601 dates),
+# integers, floats, booleans, and explicit null. Grouping criteria
+# (schemas/grouping.py) reference these by attribute name.
+AttributeValue = str | int | float | bool | None
+
+
 class Job(BaseModel):
     """Single SKU to be planned."""
 
@@ -89,6 +96,16 @@ class Job(BaseModel):
     required_die_id: str | None = Field(
         default=None, description="Must use this specific die ID (from inventory)."
     )
+    attributes: dict[str, AttributeValue] = Field(
+        default_factory=dict,
+        description=(
+            "Arbitrary typed grouping attributes — any scalar the caller's data "
+            "model carries (ISO-8601 dates as strings, booleans, numbers, free "
+            "strings, or null). Referenced by grouping_criteria on /v1/sift/solve "
+            "to partition (hard) or affinitise (soft) the layout. Ignored by the "
+            "solver unless a criterion names the key."
+        ),
+    )
 
 
 # --- Availability snapshot (optional, stateless input) ----------------------
@@ -104,7 +121,18 @@ class SubstrateStock(_Strict):
 class DieStock(_Strict):
     id: str
     mounted_on_press_id: str | None = None
-    qty: int = Field(..., ge=1)
+    qty: int = Field(..., ge=0, description="Quantity on hand; 0 = tracked but out of stock.")
+    # Optional shape info — required to resolve DielineRefDie in T2/T3 solvers.
+    width_pt: PositiveFloat | None = Field(
+        default=None, description="Rect die width in pts (for DielineRefDie resolution)."
+    )
+    height_pt: PositiveFloat | None = Field(
+        default=None, description="Rect die height in pts (for DielineRefDie resolution)."
+    )
+    polygon_points: list[tuple[float, float]] | None = Field(
+        default=None,
+        description="Polygon die ring [[x,y],...] (for DielineRefDie resolution).",
+    )
 
 
 class PlateStock(_Strict):
@@ -165,6 +193,7 @@ class ObjectiveWeights(BaseModel):
 
 
 __all__ = [
+    "AttributeValue",
     "RectDie",
     "PolygonDie",
     "DielineRefDie",
