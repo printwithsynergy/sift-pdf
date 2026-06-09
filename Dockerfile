@@ -14,8 +14,12 @@ ENV UV_NO_CACHE=1
 WORKDIR /build
 RUN pip install --no-cache-dir uv
 
-COPY pyproject.toml uv.lock* ./
+# README.md is referenced by pyproject (`readme = "README.md"`); hatchling needs it
+# present to build the project wheel, so copy it alongside the manifest.
+COPY pyproject.toml uv.lock* README.md ./
 COPY src/ ./src/
+# pyproject force-includes schemas/ into the wheel, so it must be present at build time.
+COPY schemas/ ./schemas/
 
 RUN if [ -n "$SIFT_EXTRAS" ]; then \
       uv sync --no-dev --extra "$SIFT_EXTRAS"; \
