@@ -18,6 +18,8 @@ RUN pip install --no-cache-dir uv
 # present to build the project wheel, so copy it alongside the manifest.
 COPY pyproject.toml uv.lock* README.md ./
 COPY src/ ./src/
+# pyproject force-includes schemas/ into the wheel, so it must be present at build time.
+COPY schemas/ ./schemas/
 
 RUN if [ -n "$SIFT_EXTRAS" ]; then \
       uv sync --no-dev --extra "$SIFT_EXTRAS"; \
