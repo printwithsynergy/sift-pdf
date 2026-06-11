@@ -48,6 +48,36 @@ curl -X POST http://localhost:8100/v1/sift/solve \
 
 Supported: `half-drop-x`, `half-drop-y`, `custom` (with `stagger_offset_pt`).
 
+## Configuration
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `SIFT_AUTH_MODE` | `none` | `none` = open (no auth); `api-key` = require the `X-Sift-Key` header. Any other value is rejected (fail-closed). |
+| `SIFT_API_KEY` | — | The expected key when `SIFT_AUTH_MODE=api-key`. Required in that mode; compared constant-time. |
+| `SIFT_TIERS` | `grid,gang,nest` | Comma list gating which solver tiers are enabled. |
+
+### Auth
+
+By default the API is unauthenticated (suitable behind a trusted gateway like
+synergy). To require a key, set both:
+
+```bash
+export SIFT_AUTH_MODE=api-key
+export SIFT_API_KEY=$(openssl rand -hex 32)
+```
+
+then send it on every request:
+
+```bash
+curl -X POST http://localhost:8100/v1/sift/solve \
+  -H "X-Sift-Key: $SIFT_API_KEY" -H "Content-Type: application/json" -d '{ ... }'
+```
+
+A missing/wrong key returns `401`; an unset `SIFT_API_KEY` in `api-key` mode
+returns `500` (misconfiguration), and an unrecognized `SIFT_AUTH_MODE` is
+rejected rather than silently disabling auth. `/healthz`, `/readyz`, and
+`/v1/contract` are always public.
+
 ## Development
 
 ```bash
