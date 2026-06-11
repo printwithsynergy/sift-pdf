@@ -7,6 +7,7 @@ When auth mode is "none" all requests pass through unauthenticated.
 from __future__ import annotations
 
 import os
+import secrets
 
 from fastapi import HTTPException, Security
 from fastapi.security import APIKeyHeader
@@ -23,9 +24,16 @@ def authenticate(api_key: str | None = Security(_api_key_header)) -> None:
         expected = os.environ.get("SIFT_API_KEY", "")
         if not expected:
             raise HTTPException(status_code=500, detail="SIFT_API_KEY not configured.")
-        if api_key != expected:
+        if api_key is None or not secrets.compare_digest(api_key, expected):
             raise HTTPException(status_code=401, detail="Invalid or missing X-Sift-Key.")
-    # Unknown mode: fail open with a warning (don't lock out in misconfigured deploys).
+        return
+    # Unknown / unsupported mode: fail CLOSED. A misconfigured SIFT_AUTH_MODE
+    # (typo, or a mode that isn't implemented) must reject requests, not
+    # silently disable authentication.
+    raise HTTPException(
+        status_code=500,
+        detail=f"Unsupported SIFT_AUTH_MODE={auth_mode!r}; set 'none' or 'api-key'.",
+    )
 
 
 __all__ = ["authenticate"]
