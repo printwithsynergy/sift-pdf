@@ -1,5 +1,7 @@
 # sift-pdf
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/siftpdf)
+
 Stateless, deterministic imposition planning solver for the Print With Synergy stack.
 
 Given SKU/job rules + press context, produces the most efficient **step-and-repeat / stagger / gang / nest layout** — the logic behind the SNR. Hands an `ImposePlan` to `compile-pdf.impose` for PDF generation; never writes bytes itself.
