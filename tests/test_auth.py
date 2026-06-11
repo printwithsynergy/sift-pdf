@@ -66,3 +66,12 @@ def test_auth_healthz_never_requires_key(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("SIFT_API_KEY", "test-secret")
     r = client.get("/v1/healthz")
     assert r.status_code == 200
+
+
+def test_auth_unknown_mode_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A typo'd / unimplemented SIFT_AUTH_MODE must reject (500), never
+    # silently disable auth (fail open).
+    for mode in ("api-keys", "jwt", "bearer", "off"):
+        monkeypatch.setenv("SIFT_AUTH_MODE", mode)
+        r = client.post(_SOLVE_URL, json=_SOLVE_PAYLOAD, headers={"X-Sift-Key": "any"})
+        assert r.status_code == 500, f"{mode} -> {r.status_code}"
